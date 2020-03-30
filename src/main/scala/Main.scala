@@ -9,12 +9,17 @@ case class Template(atoms: List[TemplateAtom], trace: Boolean = false) {
 
   def withTrace: Template = copy(trace = true)
 
-  // TODO implement matching
   // TODO add regex like repeating patterns rather that just wildcards
   //      do this sooner rather than later in case it stuffs up logic
-  // TODO pretty inefficient and easily runs out of stack space
   // TODO use template and templateIx instead of atoms and atomIx
   //      and use class to pre-calculate tableIx for pattern pos
+  // TODO implement matching. Could be higher priority, but how to implement matching?
+  //      Can we record at each table index what the index of the next step we took was?
+  //      Then how to recover match from that?
+  //      Seems to me this is where Template class with pattern <=> tableIx comes in handy
+  //      But want proper repeating patterns first in case it stuffs up table logic
+  //      So do repeating patterns first, then template/templateIx change, then matching
+  // TODO pretty inefficient and easily runs out of stack space
 
   def score(text: String): Int = {
     var stepCount = 0
