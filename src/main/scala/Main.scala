@@ -1,11 +1,11 @@
 object Main {
 
   def main(args: Array[String]): Unit = {
-    println(Template(List(Constant("aa"), Text(), Constant("bb"))).withTrace.score("afaffbb"))
+    println(Template(Array(Constant("aa"), Text(), Constant("bb"), Finish())).withTrace.score("afaffbb"))
   }
 }
 
-case class Template(atoms: List[TemplateAtom], trace: Boolean = false) {
+case class Template(atoms: Array[TemplateAtom], trace: Boolean = false) {
 
   def withTrace: Template = copy(trace = true)
 
@@ -20,100 +20,128 @@ case class Template(atoms: List[TemplateAtom], trace: Boolean = false) {
   //      But want proper repeating patterns first in case it stuffs up table logic
   //      So do repeating patterns first, then template/templateIx change, then matching
   // TODO pretty inefficient and easily runs out of stack space
+  // TODO get benchmarks up and running and then start investigating whether we can make
+  //      code more optimised and safer. Current approach is both overly simplistic but also
+  //      more skeptical of creating new objects than standard Scala code.
+  // TODO Atom should be Segment or similar rather than atom ... constant is not indivisible!
 
   def score(text: String): Int = {
+    val index = Index(text, this)
     var stepCount = 0
 
-    val tableLen = tableIx(atoms, 0, text, 0) + 1 // TODO co-locate tableLen with tableIx
-    val tableHit = Array.ofDim[Boolean](tableLen)
-    val tableVal = Array.ofDim[Int](tableLen)
+    val tableHit = index.createTable[Boolean](false)
+    val tableVal = index.createTable[Int](0)
 
-    def inner(atoms: List[TemplateAtom], textIx: Int, atomIx: Int): Int = {
+    def inner(textIx: Int, templateIx: Int): Int = {
       stepCount += 1
       val step = stepCount
 
       if (trace) {
-        val split = s"${text.substring(0, textIx)}^${text.substring(textIx)}"
-        val prettyAtoms = s"${atoms.take(1).map(pretty(_, atomIx)).mkString}${atoms.drop(1).map(pretty(_, 0)).mkString}"
-        println(s"enter step $step: position: $split pattern: $prettyAtoms")
+        val splitText = index.prettyText(textIx)
+        val splitTemplate = index.prettyTemplate(templateIx)
+        println(s"enter step $step: position: $splitText pattern: $splitTemplate")
       }
 
-      val tix = tableIx(atoms, atomIx, text, textIx)
+      val tix = index.tableIx(textIx, templateIx)
       if (tableHit(tix)) {
         val result = tableVal(tix)
 
         if (trace) {
-          val split = s"${text.substring(0, textIx)}^${text.substring(textIx)}"
-          val prettyAtoms = s"${atoms.take(1).map(pretty(_, atomIx)).mkString}${atoms.drop(1).map(pretty(_, 0)).mkString}"
-          println(s"leave step $step: position: $split pattern: $prettyAtoms, cached $result")
+          val splitText = index.prettyText(textIx)
+          val splitTemplate = index.prettyTemplate(templateIx)
+          println(s"leave step $step: position: $splitText pattern: $splitTemplate, cached $result")
         }
 
         return result
       }
 
-      val result = atoms match {
-        case List() =>
+      val result = index.atom(templateIx) match {
+        case Constant(pattern) if textIx == text.length =>
+          val atomIx = index.atomIx(templateIx)
+          val jump   = pattern.length - atomIx
+          jump + inner(textIx, templateIx+jump)
+
+        case Constant(pattern) if textIx < text.length =>
+          val atomIx = index.atomIx(templateIx)
+          if (pattern(atomIx) == text(textIx)) {
+            // I believe I can prove that it's always optimal, or at least equal to optimal, to follow this path if text and pattern match
+            inner(textIx+1, templateIx+1)
+          } else {
+            1 + (inner(textIx+1, templateIx) min inner(textIx, templateIx+1))
+          }
+
+        case Text() if textIx == text.length =>
+          inner(textIx, templateIx+1)
+
+        case Text() if textIx < text.length =>
+          inner(textIx+1, templateIx) min inner(textIx, templateIx+1)
+
+        case Finish() =>
+          // correct  whether textIx == or < than text.length
           text.length - textIx
-
-        case Constant(pattern) :: restAtoms if textIx == text.length =>
-          pattern.length - atomIx + inner(restAtoms, textIx, 0)
-
-        case Constant(pattern) :: restAtoms if textIx < text.length && atomIx == pattern.length =>
-          inner(restAtoms, textIx, 0)
-
-        case Constant(pattern) :: restAtoms if textIx < text.length && atomIx < pattern.length && pattern(atomIx) == text(textIx) =>
-          // I believe I can prove that it's always optimal, or at least equal to optimal, to follow this path if text and pattern match
-          inner(atoms, textIx+1, atomIx+1)
-
-        case Constant(pattern) :: restAtoms if textIx < text.length && atomIx < pattern.length && pattern(atomIx) != text(textIx) =>
-          1 + (inner(atoms, textIx+1, atomIx) min inner(atoms, textIx, atomIx+1))
-
-        case Text() :: restAtoms if textIx == text.length =>
-          inner(restAtoms, textIx, 0)
-
-        case Text() :: restAtoms if textIx < text.length =>
-          inner(atoms, textIx+1, atomIx) min inner(restAtoms, textIx, 0)
       }
 
       tableVal(tix) = result
       tableHit(tix) = true
 
       if (trace) {
-        val split = s"${text.substring(0, textIx)}^${text.substring(textIx)}"
-        val prettyAtoms = s"${atoms.take(1).map(pretty(_, atomIx)).mkString}${atoms.drop(1).map(pretty(_, 0)).mkString}"
-        println(s"leave step $step: position: $split pattern: $prettyAtoms, score $result")
+        val splitText = index.prettyText(textIx)
+        val splitTemplate = index.prettyTemplate(templateIx)
+        println(s"leave step $step: position: $splitText pattern: $splitTemplate, score $result")
       }
 
       result
     }
 
-    inner(atoms, 0, 0)
+    inner(0, 0)
   }
+}
 
-  def tableIx(atoms: List[TemplateAtom], atomIx: Int, text: String, textIx: Int): Int =
-    tableIx(atoms, atomIx) * text.length + text.length - textIx
+/** A class which understands how to index into templates and text and template vs. text tables. */
+case class Index(text: String, template: Template) {
+  val templateSizes = template.atoms.map {
+                        case Constant(c) => c.length // have to be careful I don't assume that incrementing templateIx by 1 doesn't skip empty constants
+                        case Text()      => 1
+                        case Finish()    => 1
+                      }
+  val templateOuterIx: Array[Int] = templateSizes.zipWithIndex.flatMap { case (n,i) => Array.fill(n)(i) }
+  val templateInnerIx: Array[Int] = templateSizes.flatMap(0 until _)
 
-  def tableIx(atoms: List[TemplateAtom], atomIx: Int): Int = {
-    val head = atoms.take(1).map {
-      case Constant(text) => text.length - atomIx
-      case Text()         => 1
-    }.sum
+  val templateLength: Int = templateInnerIx.length
+  val textLength: Int = text.length + 1 // textIx can be length of text, to represent consumption is complete
 
-    val tail = atoms.drop(1).map {
-      case Constant(text) => text.length
-      case Text()         => 1
-    }.sum
+  val tableLength = templateLength * textLength
 
-    head + tail
+  def createTable[T : scala.reflect.ClassTag](element: T): Array[T] = Array.fill(tableLength)(element)
+
+  def tableIx(textIx: Int, templateIx: Int): Int =
+    textIx * templateLength + templateIx
+
+  def atom(templateIx: Int): TemplateAtom = template.atoms(templateOuterIx(templateIx))
+
+  def atomIx(templateIx: Int): Int = templateInnerIx(templateIx)
+
+  def prettyText(textIx: Int): String =
+    s"${text.substring(0, textIx)}^${text.substring(textIx)}"
+
+  def prettyTemplate(templateIx: Int): String = {
+    val outerIx = templateOuterIx(templateIx)
+    val innerIx = templateInnerIx(templateIx)
+    template.atoms.zipWithIndex.map {
+      case (Constant(c), i) if i  == outerIx => s"${c.substring(0, innerIx)}^${c.substring(innerIx)}"
+      case (Constant(c), _)                  => c
+      case (Text(), 0)                       => "*"
+       case (Finish(), 0)                    => "$"
+    }.mkString
   }
-
-  def pretty(atom: TemplateAtom, atomIx: Int): String =
-    atom match {
-      case Constant(text) => text.substring(atomIx)
-      case Text()         => "*"
-    }
 }
 
 sealed trait TemplateAtom
+
 case class Constant(text: String) extends TemplateAtom
+
 case class Text() extends TemplateAtom
+
+/** It's convenient to represent the end of the atom list with a value.
+    It's an error if template atom list doesn't end with Finish. */
+case class Finish() extends TemplateAtom
