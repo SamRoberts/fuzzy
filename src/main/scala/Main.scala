@@ -165,6 +165,7 @@ case class Index(text: String, template: Template) {
     val outerIx = templateOuterIx(templateIx)
     val innerIx = templateInnerIx(templateIx)
     template.atoms.map(_.pretty).zipWithIndex.map {
+      // TODO this simple approach is no longer going to work with the brackets around patterns inside multiplers
       case (pretty, i) if i == outerIx => s"${pretty.substring(0, innerIx)}^${pretty.substring(innerIx)}"
       case (pretty, _)                 => pretty
     }.mkString
@@ -181,8 +182,8 @@ case class Char() extends TemplateAtom {
   def pretty = "."
 }
 
-case class Text() extends TemplateAtom {
-  def pretty = "*"
+case class Multiple(atoms: Array[TemplateAtom]) extends TemplateAtom {
+  def pretty = s"(${atoms.map(_.pretty).mkString})*"
 }
 
 /** It's convenient to represent the end of the atom list with a value.
