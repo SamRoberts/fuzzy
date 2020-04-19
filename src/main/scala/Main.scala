@@ -1,11 +1,40 @@
 object Main {
 
   def main(args: Array[String]): Unit = {
-    println(Template(Array(Constant("aa"), Text(), Constant("bb"), Finish())).withTrace.score("afaffbb"))
+    val cases = List(
+      (Template(Array(Finish())), "", 0),
+      (Template(Array(Finish())), "aabb", 4),
+      (Template(Array(Constant("aa"), Finish())), "", 2),
+      (Template(Array(Text(), Finish())), "aabb", 0),
+      (Template(Array(Constant("aa"), Finish())), "aba", 1),
+      (Template(Array(Constant("a"), Char(), Constant("a"), Finish())), "aba", 0),
+      (Template(Array(Constant("aa"), Char(), Finish())), "aba", 2),
+      (Template(Array(Constant("aa"), Text(), Constant("bb"), Finish())), "afaffbb", 1),
+      (Template(Array(Constant("a"), Char(), Text(), Constant("bb"), Finish())), "afaffbb", 0)
+    )
+
+    val results = cases.map { case (template, text, expected) => (template,  text, expected, template.score(text)) }
+
+    results.filter { case (_, _, expected, actual) => expected != actual }.foreach {
+      case (template, text, expected, actual) =>
+        template.withTrace.score(text)
+        println(s"final score $actual does not equal $expected")
+        println()
+    }
+
+    println(" template | text     | expected | actual ")
+    println("----------|----------|----------|--------")
+    println(
+      results.map { case (template, text, expected, actual) =>
+        f" ${template.pretty}%8s | $text%8s | $expected%8d | $actual%6d "
+      }.mkString("\n")
+    )
   }
 }
 
 case class Template(atoms: Array[TemplateAtom], trace: Boolean = false) {
+
+  def pretty = atoms.map(_.pretty).mkString
 
   def withTrace: Template = copy(trace = true)
 
@@ -39,7 +68,7 @@ case class Template(atoms: Array[TemplateAtom], trace: Boolean = false) {
       if (trace) {
         val splitText = index.prettyText(textIx)
         val splitTemplate = index.prettyTemplate(templateIx)
-        println(s"enter step $step: position: $splitText pattern: $splitTemplate")
+        println(f"enter step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s")
       }
 
       val tix = index.tableIx(textIx, templateIx)
@@ -49,7 +78,7 @@ case class Template(atoms: Array[TemplateAtom], trace: Boolean = false) {
         if (trace) {
           val splitText = index.prettyText(textIx)
           val splitTemplate = index.prettyTemplate(templateIx)
-          println(s"leave step $step: position: $splitText pattern: $splitTemplate, cached $result")
+          println(f"leave step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s, cache $result%2d")
         }
 
         return result
@@ -76,6 +105,15 @@ case class Template(atoms: Array[TemplateAtom], trace: Boolean = false) {
         case Text() if textIx < text.length =>
           inner(textIx+1, templateIx) min inner(textIx, templateIx+1)
 
+        case Char() if textIx == text.length  =>
+          1 + inner(textIx, templateIx+1)
+
+        case Char() if textIx < text.length =>
+          // I believe I can prove that it's always optimal, or at least equal to optimal, to follow this path char can consume something
+          // although for the purposes of cleanness it might be nicer to miss a character wildcard than a constant character
+          // something about going with the optiomal path which had the least chance of being optimal? maybe?
+          inner(textIx+1, templateIx+1)
+
         case Finish() =>
           // correct  whether textIx == or < than text.length
           text.length - textIx
@@ -87,7 +125,7 @@ case class Template(atoms: Array[TemplateAtom], trace: Boolean = false) {
       if (trace) {
         val splitText = index.prettyText(textIx)
         val splitTemplate = index.prettyTemplate(templateIx)
-        println(s"leave step $step: position: $splitText pattern: $splitTemplate, score $result")
+        println(f"leave step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s, score $result%2d")
       }
 
       result
@@ -102,6 +140,7 @@ case class Index(text: String, template: Template) {
   val templateSizes = template.atoms.map {
                         case Constant(c) => c.length // have to be careful I don't assume that incrementing templateIx by 1 doesn't skip empty constants
                         case Text()      => 1
+                        case Char()      => 1
                         case Finish()    => 1
                       }
   val templateOuterIx: Array[Int] = templateSizes.zipWithIndex.flatMap { case (n,i) => Array.fill(n)(i) }
@@ -127,21 +166,29 @@ case class Index(text: String, template: Template) {
   def prettyTemplate(templateIx: Int): String = {
     val outerIx = templateOuterIx(templateIx)
     val innerIx = templateInnerIx(templateIx)
-    template.atoms.zipWithIndex.map {
-      case (Constant(c), i) if i  == outerIx => s"${c.substring(0, innerIx)}^${c.substring(innerIx)}"
-      case (Constant(c), _)                  => c
-      case (Text(), 0)                       => "*"
-       case (Finish(), 0)                    => "$"
+    template.atoms.map(_.pretty).zipWithIndex.map {
+      case (pretty, i) if i == outerIx => s"${pretty.substring(0, innerIx)}^${pretty.substring(innerIx)}"
+      case (pretty, _)                 => pretty
     }.mkString
   }
 }
 
-sealed trait TemplateAtom
+sealed trait TemplateAtom { def pretty: String }
 
-case class Constant(text: String) extends TemplateAtom
+case class Constant(text: String) extends TemplateAtom {
+  def pretty = text
+}
 
-case class Text() extends TemplateAtom
+case class Char() extends TemplateAtom {
+  def pretty = "."
+}
+
+case class Text() extends TemplateAtom {
+  def pretty = "*"
+}
 
 /** It's convenient to represent the end of the atom list with a value.
     It's an error if template atom list doesn't end with Finish. */
-case class Finish() extends TemplateAtom
+case class Finish() extends TemplateAtom {
+  def pretty = "$"
+}
