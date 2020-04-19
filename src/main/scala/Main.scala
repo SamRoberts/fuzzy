@@ -40,8 +40,6 @@ case class Template(atoms: Array[TemplateAtom], trace: Boolean = false) {
 
   // TODO add regex like repeating patterns rather that just wildcards
   //      do this sooner rather than later in case it stuffs up logic
-  // TODO use template and templateIx instead of atoms and atomIx
-  //      and use class to pre-calculate tableIx for pattern pos
   // TODO implement matching. Could be higher priority, but how to implement matching?
   //      Can we record at each table index what the index of the next step we took was?
   //      Then how to recover match from that?
