@@ -5,12 +5,16 @@ object Main {
       ("", "", 0),
       ("", "aabb", 4),
       ("aa", "", 2),
+      ("a*", "", 0),
       (".*", "aabb", 0),
       ("aa", "aba", 1),
       ("a.a", "aba", 0),
       ("aa.", "aba", 2),
       ("aa.*bb", "afaffbb", 1),
-      ("a..*bb", "afaffbb", 0)
+      ("za*bb", "zbb", 0),
+      ("a..*bb", "afaffbb", 0),
+      ("z(ac)*z", "zacdacacz", 1),
+      ("z(a*c)*z", "zacdaaacaacz", 1)
     )
 
     val results = cases.map { case (template, text, expected) => (template,  text, expected, Template(template).score(text)) }
@@ -22,11 +26,11 @@ object Main {
         println()
     }
 
-    println(" template | text     | expected | actual ")
-    println("----------|----------|----------|--------")
+    println(" template | text         | expected | actual ")
+    println("----------|--------------|----------|--------")
     println(
       results.map { case (template, text, expected, actual) =>
-        f" $template%8s | $text%8s | $expected%8d | $actual%6d "
+        f" $template%8s | $text%12s | $expected%8d | $actual%6d "
       }.mkString("\n")
     )
   }
@@ -34,7 +38,8 @@ object Main {
 
 case class Template(template: String, trace: Boolean = false) {
 
-  val forks = createForks(template)
+  val forks      = createForks(template)
+  val traceForks = forks.length > 0 && forks.forall(_ < 10)
 
   def withTrace: Template = copy(trace = true)
 
@@ -46,79 +51,104 @@ case class Template(template: String, trace: Boolean = false) {
   //      Seems to me this is where Template class with pattern <=> tableIx comes in handy
   //      But want proper repeating patterns first in case it stuffs up table logic
   //      So do repeating patterns first, then template/templateIx change, then matching
-  // TODO pretty inefficient and easily runs out of stack space
   // TODO get benchmarks up and running and then start investigating whether we can make
   //      code more optimised and safer. Current approach is both overly simplistic but also
   //      more skeptical of creating new objects than standard Scala code.
-  // TODO Atom should be Segment or similar rather than atom ... constant is not indivisible!
 
   def score(text: String): Int = {
     var stepCount = 0
 
-    val tableHit = Table[Boolean](text, template, false)
-    val tableVal = Table[Int](text, template, 0)
+    // if tableFin(i,j) then tableVal(i,j) is final score
+    // tableAcc(i,j) is minimum accumulated penalty incurred to i,j
+    val tableVal = Table[Int](text, template, -1)
+    val tableAcc = Table[Int](text, template, -1)
 
-    def inner(textIx: Int, templateIx: Int): Int = {
+    def inner(textIx: Int, templateIx: Int, acc: Int): Int = {
       stepCount += 1
       val step = stepCount
 
       printTraceMsg("enter", step, text, textIx, template, templateIx)
 
-      if (tableHit(textIx, templateIx)) {
+      val templateFinished = templateIx >= template.length
+      val textFinished     = textIx >= text.length
+      def canFork          = set(forks(templateIx))
+      def bigForkIx        = (templateIx+1) max forks(templateIx)
+      def smallForkIx      = (templateIx+1) min forks(templateIx)
+      def templateControl  = { val c = template(templateIx); c == '*' || c == '(' || c == ')' }
+      def isMatch          = { val c = template(templateIx); c == '.' || c == text(textIx) }
+
+
+      if (set(tableVal(textIx, templateIx))) {
         val result = tableVal(textIx, templateIx)
         printTraceMsg("leave", step,  text, textIx, template, templateIx, "cache", result)
         return result
       }
 
-      val result = {
-        // TODO figure out how to incorporate forks array into calculation
-        // now we:
-        //   - template and text are at an end, finish
-        //   - if template is control char, skip template
-        //   - if template does not match text, take penality plus minimum of skipping template or text
-        //   - if template matches text, skip template and text
-        //   - when skipping template with fork, take minimum of incrementing or forking
-        //   - when skipping text or skipping template with no fork, just increment
-        //   - any skipping options that can't be done due to end of text or template ... well, obviously can't be done
+      if (set(tableAcc(textIx, templateIx)) && tableAcc(textIx, templateIx) <= acc) {
+        // if we've already reached this state and our accumulated score isn't any better, we might as well give up now
+        printTraceMsg("leave", step, text, textIx, template, templateIx, "throw", -1)
+        return -1
+      } else {
+        tableAcc(textIx, templateIx) = acc
+      }
 
-        if (templateIx < template.length && template(templateIx) == '*' && textIx == text.length) {
-          inner(textIx, templateIx+1)
-        }
-        else if (templateIx < template.length && template(templateIx) == '*' && textIx < text.length) {
-          inner(textIx+1, templateIx) min inner(textIx, templateIx+1)
-        }
-        else if (templateIx < template.length && textIx == text.length) {
-          1 + inner(textIx, templateIx+1)
-        }
-        else if (templateIx < template.length && textIx < text.length) {
-          if (template(templateIx)  == '.' || template(templateIx) == text(textIx)) {
-            // I believe I can prove that it's always optimal, or at least equal to optimal, to follow this path char can consume something
-            // although for the purposes of cleanness it might be nicer to miss a character wildcard than a constant character
-            // something about going with the optiomal path which had the least chance of being optimal? maybe?
-            inner(textIx+1, templateIx+1)
-          } else {
-            1 + (inner(textIx+1, templateIx) min inner(textIx, templateIx+1))
-          }
-        }
-        else if (templateIx == template.length) {
+      val result =
+        if (templateFinished) {
           // correct  whether textIx == or < than text.length
           text.length - textIx
+        }
+        else if (!templateFinished && templateControl && !canFork) {
+          inner(textIx, templateIx+1, acc)
+        }
+        else if (!templateFinished && templateControl && canFork) {
+          minSet(inner(textIx, bigForkIx, acc), inner(textIx, smallForkIx, acc))
+        }
+        else if (!templateFinished && !templateControl && textFinished && !canFork) {
+          1 + inner(textIx, templateIx+1, acc+1)
+        }
+        else if (!templateFinished && !templateControl && textFinished && canFork) {
+          incSet(minSet(inner(textIx, bigForkIx, acc+1), inner(textIx, smallForkIx, acc+1)))
+        }
+        else if (!templateFinished && !templateControl && !textFinished && isMatch && !canFork) {
+          inner(textIx+1, templateIx+1, acc)
+        }
+        else if (!templateFinished && !templateControl && !textFinished && isMatch && canFork) {
+          minSet(inner(textIx+1, bigForkIx, acc), inner(textIx+1, smallForkIx, acc))
+        }
+        else if (!templateFinished && !templateControl && !textFinished && !isMatch && !canFork) {
+          incSet(minSet(inner(textIx, templateIx+1, acc+1), inner(textIx+1, templateIx, acc+1)))
+        }
+        else if (!templateFinished && !templateControl && !textFinished && !isMatch && canFork) {
+          incSet(minSet(inner(textIx, bigForkIx, acc+1), inner(textIx, smallForkIx, acc+1), inner(textIx+1, templateIx, acc+1)))
         }
         else {
           throw new Exception("programmer error: unexpected case")
         }
-      }
 
-      tableVal(textIx, templateIx) = result
-      tableHit(textIx, templateIx) = true
+      if (set(result)) tableVal(textIx, templateIx) = result
 
       printTraceMsg("leave", step, text, textIx, template, templateIx, "score", result)
 
       result
     }
 
-    inner(0, 0)
+    inner(0, 0, 0)
   }
+
+  // we use -1 to represent unset int scores and similar numbers
+  // ok, using -1 as unset score has lead to some very ugly code below to work with these numbers ...
+
+  def set(score: Int)  = score >= 0
+
+  def minSet(score1: Int, score2: Int): Int =
+    if (set(score1) && set(score2)) score1 min score2
+    else                            score1 max score2 // only works as unset numbers are negative
+
+  def minSet(score1: Int, score2: Int, score3: Int): Int =
+    minSet(minSet(score1, score2), minSet(score1, score3))
+
+  def incSet(score: Int): Int =
+    if (set(score)) score+1 else score
 
   /** Returns an array of possible forks for each position, -1 if no fork */
   def createForks(template: String): Array[Int] = {
@@ -168,7 +198,12 @@ case class Template(template: String, trace: Boolean = false) {
     if (trace) {
       val splitText = Util.indexed(text, textIx)
       val splitTemplate = Util.indexed(template, templateIx)
-      println(f"$action step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s")
+      if (traceForks) {
+        val splitForks = Util.indexed(forks.map(i => if (set(i)) i.toString else ".").mkString, templateIx)
+        println(f"$action step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s forks: $splitForks")
+      } else {
+        println(f"$action step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s")
+      }
     }
   }
 
@@ -176,7 +211,12 @@ case class Template(template: String, trace: Boolean = false) {
     if (trace) {
       val splitText = Util.indexed(text, textIx)
       val splitTemplate = Util.indexed(template, templateIx)
-      println(f"$action step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s, $scoreType $score%2d")
+      if (traceForks) {
+        val splitForks = Util.indexed(forks.map(i => if (set(i)) i.toString else ".").mkString, templateIx)
+        println(f"$action step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s forks: $splitForks, $scoreType $score%2d")
+      } else {
+        println(f"$action step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s, $scoreType $score%2d")
+      }
     }
   }
 }
