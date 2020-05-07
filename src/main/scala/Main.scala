@@ -30,7 +30,8 @@ object Main {
     println("----------|--------------|----------|--------")
     println(
       results.map { case (template, text, expected, actual) =>
-        f" $template%8s | $text%12s | $expected%8d | $actual%6d "
+        val line = f" $template%8s | $text%12s | $expected%8d | $actual%6d "
+        if (expected == actual) line else Console.RED + line + Console.RESET
       }.mkString("\n")
     )
   }
@@ -63,11 +64,11 @@ case class Template(template: String, trace: Boolean = false) {
     val tableVal = Table[Int](text, template, -1)
     val tableAcc = Table[Int](text, template, -1)
 
-    def inner(textIx: Int, templateIx: Int, acc: Int): Int = {
+    def inner(parentStep: Int, textIx: Int, templateIx: Int, acc: Int): Int = {
       stepCount += 1
       val step = stepCount
 
-      printTraceMsg("enter", step, text, textIx, template, templateIx)
+      printTraceMsg("enter", parentStep, step, text, textIx, template, templateIx)
 
       val templateFinished = templateIx >= template.length
       val textFinished     = textIx >= text.length
@@ -80,13 +81,13 @@ case class Template(template: String, trace: Boolean = false) {
 
       if (set(tableVal(textIx, templateIx))) {
         val result = tableVal(textIx, templateIx)
-        printTraceMsg("leave", step,  text, textIx, template, templateIx, "cache", result)
+        printTraceMsg("leave", step, parentStep, text, textIx, template, templateIx, "cache", result)
         return result
       }
 
       if (set(tableAcc(textIx, templateIx)) && tableAcc(textIx, templateIx) <= acc) {
         // if we've already reached this state and our accumulated score isn't any better, we might as well give up now
-        printTraceMsg("leave", step, text, textIx, template, templateIx, "throw", -1)
+        printTraceMsg("leave", step, parentStep, text, textIx, template, templateIx, "throw", -1)
         return -1
       } else {
         tableAcc(textIx, templateIx) = acc
@@ -98,28 +99,28 @@ case class Template(template: String, trace: Boolean = false) {
           text.length - textIx
         }
         else if (!templateFinished && templateControl && !canFork) {
-          inner(textIx, templateIx+1, acc)
+          inner(step, textIx, templateIx+1, acc)
         }
         else if (!templateFinished && templateControl && canFork) {
-          minSet(inner(textIx, bigForkIx, acc), inner(textIx, smallForkIx, acc))
+          minSet(inner(step, textIx, bigForkIx, acc), inner(step, textIx, smallForkIx, acc))
         }
         else if (!templateFinished && !templateControl && textFinished && !canFork) {
-          1 + inner(textIx, templateIx+1, acc+1)
+          1 + inner(step, textIx, templateIx+1, acc+1)
         }
         else if (!templateFinished && !templateControl && textFinished && canFork) {
-          incSet(minSet(inner(textIx, bigForkIx, acc+1), inner(textIx, smallForkIx, acc+1)))
+          incSet(minSet(inner(step, textIx, bigForkIx, acc+1), inner(step, textIx, smallForkIx, acc+1)))
         }
         else if (!templateFinished && !templateControl && !textFinished && isMatch && !canFork) {
-          inner(textIx+1, templateIx+1, acc)
+          inner(step, textIx+1, templateIx+1, acc)
         }
         else if (!templateFinished && !templateControl && !textFinished && isMatch && canFork) {
-          minSet(inner(textIx+1, bigForkIx, acc), inner(textIx+1, smallForkIx, acc))
+          minSet(inner(step, textIx+1, bigForkIx, acc), inner(step, textIx+1, smallForkIx, acc))
         }
         else if (!templateFinished && !templateControl && !textFinished && !isMatch && !canFork) {
-          incSet(minSet(inner(textIx, templateIx+1, acc+1), inner(textIx+1, templateIx, acc+1)))
+          incSet(minSet(inner(step, textIx, templateIx+1, acc+1), inner(step, textIx+1, templateIx, acc+1)))
         }
         else if (!templateFinished && !templateControl && !textFinished && !isMatch && canFork) {
-          incSet(minSet(inner(textIx, bigForkIx, acc+1), inner(textIx, smallForkIx, acc+1), inner(textIx+1, templateIx, acc+1)))
+          incSet(minSet(inner(step, textIx, bigForkIx, acc+1), inner(step, textIx, smallForkIx, acc+1), inner(step, textIx+1, templateIx, acc+1)))
         }
         else {
           throw new Exception("programmer error: unexpected case")
@@ -127,12 +128,12 @@ case class Template(template: String, trace: Boolean = false) {
 
       if (set(result)) tableVal(textIx, templateIx) = result
 
-      printTraceMsg("leave", step, text, textIx, template, templateIx, "score", result)
+      printTraceMsg("leave", step, parentStep, text, textIx, template, templateIx, "score", result)
 
       result
     }
 
-    inner(0, 0, 0)
+    inner(0, 0, 0, 0)
   }
 
   // we use -1 to represent unset int scores and similar numbers
@@ -194,28 +195,28 @@ case class Template(template: String, trace: Boolean = false) {
     forks
   }
 
-  def printTraceMsg(action: String, step: Int, text: String, textIx: Int, template: String, templateIx: Int): Unit  = {
+  def printTraceMsg(action: String, lastStep: Int, step: Int, text: String, textIx: Int, template: String, templateIx: Int): Unit  = {
     if (trace) {
       val splitText = Util.indexed(text, textIx)
       val splitTemplate = Util.indexed(template, templateIx)
       if (traceForks) {
         val splitForks = Util.indexed(forks.map(i => if (set(i)) i.toString else ".").mkString, templateIx)
-        println(f"$action step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s forks: $splitForks")
+        println(f"$action $lastStep%2d to $step%2d: position: $splitText%8s pattern: $splitTemplate%8s forks: $splitForks")
       } else {
-        println(f"$action step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s")
+        println(f"$action $lastStep%2d to $step%2d: position: $splitText%8s pattern: $splitTemplate%8s")
       }
     }
   }
 
-  def printTraceMsg(action: String, step: Int, text: String, textIx: Int, template: String, templateIx: Int, scoreType: String, score: Int): Unit  = {
+  def printTraceMsg(action: String, lastStep: Int, step: Int, text: String, textIx: Int, template: String, templateIx: Int, scoreType: String, score: Int): Unit  = {
     if (trace) {
       val splitText = Util.indexed(text, textIx)
       val splitTemplate = Util.indexed(template, templateIx)
       if (traceForks) {
         val splitForks = Util.indexed(forks.map(i => if (set(i)) i.toString else ".").mkString, templateIx)
-        println(f"$action step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s forks: $splitForks, $scoreType $score%2d")
+        println(f"$action $lastStep%2d to $step%2d: position: $splitText%8s pattern: $splitTemplate%8s forks: $splitForks, $scoreType $score%2d")
       } else {
-        println(f"$action step $step%3d: position: $splitText%8s pattern: $splitTemplate%8s, $scoreType $score%2d")
+        println(f"$action $lastStep%2d to $step%2d: position: $splitText%8s pattern: $splitTemplate%8s, $scoreType $score%2d")
       }
     }
   }
@@ -240,6 +241,8 @@ case class Table[T : scala.reflect.ClassTag](text: String, template: String, ele
 }
 
 object Util {
-  def indexed(text: String, ix: Int): String =
-    s"${text.substring(0, ix)}^${text.substring(ix)}"
+  def indexed(text: String, ix: Int): String = {
+    val spaced = text + " "
+    spaced.substring(0, ix) + Console.BLUE_B + spaced(ix) + Console.RESET + spaced.substring(ix+1)
+  }
 }
