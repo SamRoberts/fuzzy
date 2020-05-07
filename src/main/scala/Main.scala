@@ -20,21 +20,23 @@ object Main {
       (".*b.*c", "yyyy", 2)
     )
 
-    val results = cases.map { case (template, text, expected) => (template,  text, expected, Template(template).score(text)) }
+    val results = cases.map { case (template, text, expected) => (template,  text, expected, Template(template).score(text).score) }
 
     results.filter { case (_, _, expected, actual) => expected != actual }.foreach {
       case (template, text, expected, actual) =>
         Template(template).withTrace.score(text)
+        print(Color.std)
         println(s"final score $actual does not equal $expected")
         println()
     }
 
+    print(Color.std)
     println(" template | text         | expected | actual ")
     println("----------|--------------|----------|--------")
     println(
       results.map { case (template, text, expected, actual) =>
-        val line = f" $template%8s | $text%12s | $expected%8d | $actual%6d "
-        if (expected == actual) line else Console.RED + line + Console.RESET
+        val color = if (expected == actual) Color.stdText else Color.errText
+        f"$color $template%8s | $text%12s | $expected%8d | $actual%6d "
       }.mkString("\n")
     )
   }
@@ -57,13 +59,15 @@ case class Template(template: String, trace: Boolean = false) {
   //      more skeptical of creating new objects than standard Scala code.
   // TODO Use a logical representation of template rather than raw template.
 
-  def score(text: String): Int = {
+  def score(text: String): Match = {
     var stepCount = 0
 
-    // if tableFin(i,j) then tableVal(i,j) is final score
-    // tableAcc(i,j) is minimum accumulated penalty incurred to i,j
+    // if tableFin(i,j) then tableVal(i,j) is final score from that state to end
+    // tableAcc(i,j) is minimum accumulated penalty incurred from start to state
+    // tableRec(i,j) records the next state the optimal path took
     val tableVal = Table[Int](text, template, -1)
     val tableAcc = Table[Int](text, template, -1)
+    val tableRec = Table[Int](text, template, -1)
 
     def inner(parentStep: Int, textIx: Int, templateIx: Int, acc: Int): Int = {
       stepCount += 1
@@ -71,6 +75,7 @@ case class Template(template: String, trace: Boolean = false) {
 
       printTraceMsg("enter", step, "from", parentStep, text, textIx, template, templateIx)
 
+      def set(score: Int)  = score >= 0
       def templateFinished = templateIx >= template.length
       def textFinished     = textIx >= text.length
       def canFork          = set(forkIx)
@@ -97,61 +102,75 @@ case class Template(template: String, trace: Boolean = false) {
         tableAcc(textIx, templateIx) = acc
       }
 
-      val result =
-        if (templateFinished) {
-          // correct  whether textIx == or < than text.length
-          text.length - textIx
+      // ok, my attempt to not allocate heap in middle of loop is reaching epically stupid proportions ...
+      var result        = -1
+      var resTextIx     = -1
+      var resTemplateIx = -1
+
+      def attempt(newTextIx: Int, newTemplateIx: Int, penalty: Int): Unit = {
+        val rawScore = inner(step, newTextIx, newTemplateIx, acc+penalty)
+        val score    = if (set(rawScore)) rawScore+penalty else rawScore
+
+        // condition only works as unset numbers are negative
+        if (set(score) && score < result) {
+          result         = score
+          resTextIx     = newTextIx
+          resTemplateIx = newTemplateIx
         }
-        else if (mustGoto) {
-          inner(step, textIx, gotoIx, acc)
+      }
+
+      if (templateFinished && textFinished) {
+        result = 0
+      }
+      else if (templateFinished && !textFinished) {
+        attempt(nextText, templateIx, 1)
+      }
+      else if (mustGoto) {
+        attempt(textIx, gotoIx, 0)
+      }
+      else {
+        if (canFork) {
+           attempt(textIx, forkIx, 0)
+        }
+
+        if (templateControl) {
+          attempt(textIx, nextIx, 0)
+        }
+        else if (textFinished) {
+          attempt(textIx, nextIx, 1)
+        }
+        else if (isMatch) {
+          attempt(nextText, nextIx, 0)
         }
         else {
-          val forkResult = if (canFork) inner(step, textIx, forkIx, acc) else -1
-
-          val consumeResult =
-            if (templateControl) {
-              inner(step, textIx, nextIx, acc)
-            }
-            else if (textFinished) {
-              incSet(inner(step, textIx, nextIx, acc+1))
-            }
-            else if (isMatch) {
-              inner(step, nextText, nextIx, acc)
-            }
-            else {
-              incSet(minSet(inner(step, textIx, nextIx, acc+1), inner(step, nextText, templateIx, acc+1)))
-            }
-
-          minSet(forkResult, consumeResult)
+          attempt(textIx, nextIx, 1)
+          attempt(nextText, templateIx, 1)
         }
+      }
 
-      if (set(result)) tableVal(textIx, templateIx) = result
+      if (set(result)) {
+        tableVal(textIx, templateIx) = result
+      }
+      if (set(resTextIx) && set(resTemplateIx)) {
+        tableRec(textIx, templateIx) = tableRec.tableIx(resTextIx, resTemplateIx)
+      }
 
       printTraceMsg("leave", step, "for", parentStep, text, textIx, template, templateIx, "score", result)
 
       result
     }
 
-    inner(0, 0, 0, 0)
+    val score = inner(0, 0, 0, 0)
+
+    Match(text, this, score, tableRec)
   }
-
-  // we use -1 to represent unset int scores and similar numbers
-  // ok, using -1 as unset score has lead to some very ugly code below to work with these numbers ...
-
-  def set(score: Int)  = score >= 0
-
-  def minSet(score1: Int, score2: Int): Int =
-    if (set(score1) && set(score2)) score1 min score2
-    else                            score1 max score2 // only works as unset numbers are negative
-
-  def incSet(score: Int): Int =
-    if (set(score)) score+1 else score
 
   def printTraceMsg(action: String, step: Int, connector: String, lastStep: Int, text: String, textIx: Int, template: String, templateIx: Int): Unit  = {
     if (trace) {
-      val splitText = Util.indexed(text, textIx)
+      val splitText     = Util.indexed(text, textIx)
       val splitTemplate = Util.indexed(template, templateIx)
-      println(f"$action $step%2d $connector%4s $lastStep%2d: position: $splitText%8s pattern: $splitTemplate%8s")
+      print(Color.std)
+      println(f"$action $step%3d $connector%4s $lastStep%3d: position: $splitText%12s pattern: $splitTemplate%8s")
     }
   }
 
@@ -159,8 +178,16 @@ case class Template(template: String, trace: Boolean = false) {
     if (trace) {
       val splitText = Util.indexed(text, textIx)
       val splitTemplate = Util.indexed(template, templateIx)
-      println(f"${Console.YELLOW}$action $step%2d $connector%4s $lastStep%2d: position: $splitText%8s pattern: $splitTemplate%8s, $scoreType $score%2d${Console.RESET}")
+      print(Color.leaveText)
+      println(f"$action $step%3d $connector%4s $lastStep%3d: position: $splitText%12s pattern: $splitTemplate%8s, $scoreType $score%2d")
     }
+  }
+}
+
+case class Match(text: String, template: Template, score: Int, tableRec: Table[Int]) {
+  def trace(textIx: Int, templateIx: Int): List[(Int, Int)] = {
+    val nextTableIx = tableRec(textIx, templateIx)
+    (textIx -> templateIx) :: trace(tableRec.textIx(nextTableIx), tableRec.templateIx(nextTableIx))
   }
 }
 
@@ -180,12 +207,18 @@ case class Table[T : scala.reflect.ClassTag](text: String, template: String, ele
 
   def tableIx(textIx: Int, templateIx: Int): Int =
     textIx * templateLength + templateIx
+
+  def textIx(tableIx: Int): Int =
+    tableIx / templateLength
+
+  def templateIx(tableIx: Int): Int =
+    tableIx % templateLength
 }
 
 object Util {
   def indexed(text: String, ix: Int): String = {
     val spaced = text + " "
-    spaced.substring(0, ix) + Console.BLUE_B + spaced(ix) + Console.BLACK_B + spaced.substring(ix+1)
+    spaced.substring(0, ix) + Color.focusBack + spaced(ix) + Color.stdBack + spaced.substring(ix+1)
   }
 }
 
@@ -275,4 +308,15 @@ object ControlFlow {
 
     ControlFlow(forks, gotos)
   }
+}
+
+object Color {
+  val stdText   = Console.WHITE
+  val errText   = Console.RED
+  val leaveText = Console.YELLOW
+
+  val stdBack   = Console.BLACK_B
+  val focusBack = Console.BLUE_B
+
+  val std = stdText + stdBack
 }
