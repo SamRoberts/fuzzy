@@ -68,7 +68,7 @@ case class Template(template: String, trace: Boolean = false) {
       stepCount += 1
       val step = stepCount
 
-      printTraceMsg("enter", parentStep, step, text, textIx, template, templateIx)
+      printTraceMsg("enter", step, "from", parentStep, text, textIx, template, templateIx)
 
       val templateFinished = templateIx >= template.length
       val textFinished     = textIx >= text.length
@@ -81,13 +81,13 @@ case class Template(template: String, trace: Boolean = false) {
 
       if (set(tableVal(textIx, templateIx))) {
         val result = tableVal(textIx, templateIx)
-        printTraceMsg("leave", step, parentStep, text, textIx, template, templateIx, "cache", result)
+        printTraceMsg("leave", step, "for", parentStep, text, textIx, template, templateIx, "cache", result)
         return result
       }
 
       if (set(tableAcc(textIx, templateIx)) && tableAcc(textIx, templateIx) <= acc) {
         // if we've already reached this state and our accumulated score isn't any better, we might as well give up now
-        printTraceMsg("leave", step, parentStep, text, textIx, template, templateIx, "throw", -1)
+        printTraceMsg("leave", step, "for", parentStep, text, textIx, template, templateIx, "throw", -1)
         return -1
       } else {
         tableAcc(textIx, templateIx) = acc
@@ -128,7 +128,7 @@ case class Template(template: String, trace: Boolean = false) {
 
       if (set(result)) tableVal(textIx, templateIx) = result
 
-      printTraceMsg("leave", step, parentStep, text, textIx, template, templateIx, "score", result)
+      printTraceMsg("leave", step, "for", parentStep, text, textIx, template, templateIx, "score", result)
 
       result
     }
@@ -195,28 +195,28 @@ case class Template(template: String, trace: Boolean = false) {
     forks
   }
 
-  def printTraceMsg(action: String, lastStep: Int, step: Int, text: String, textIx: Int, template: String, templateIx: Int): Unit  = {
+  def printTraceMsg(action: String, step: Int, connector: String, lastStep: Int, text: String, textIx: Int, template: String, templateIx: Int): Unit  = {
     if (trace) {
       val splitText = Util.indexed(text, textIx)
       val splitTemplate = Util.indexed(template, templateIx)
       if (traceForks) {
         val splitForks = Util.indexed(forks.map(i => if (set(i)) i.toString else ".").mkString, templateIx)
-        println(f"$action $lastStep%2d to $step%2d: position: $splitText%8s pattern: $splitTemplate%8s forks: $splitForks")
+        println(f"$action $step%2d $connector%4s $lastStep%2d: position: $splitText%8s pattern: $splitTemplate%8s forks: $splitForks")
       } else {
-        println(f"$action $lastStep%2d to $step%2d: position: $splitText%8s pattern: $splitTemplate%8s")
+        println(f"$action $step%2d $connector%4s $lastStep%2d: position: $splitText%8s pattern: $splitTemplate%8s")
       }
     }
   }
 
-  def printTraceMsg(action: String, lastStep: Int, step: Int, text: String, textIx: Int, template: String, templateIx: Int, scoreType: String, score: Int): Unit  = {
+  def printTraceMsg(action: String, step: Int, connector: String, lastStep: Int, text: String, textIx: Int, template: String, templateIx: Int, scoreType: String, score: Int): Unit  = {
     if (trace) {
       val splitText = Util.indexed(text, textIx)
       val splitTemplate = Util.indexed(template, templateIx)
       if (traceForks) {
         val splitForks = Util.indexed(forks.map(i => if (set(i)) i.toString else ".").mkString, templateIx)
-        println(f"$action $lastStep%2d to $step%2d: position: $splitText%8s pattern: $splitTemplate%8s forks: $splitForks, $scoreType $score%2d")
+        println(f"$action $step%2d $connector%4s $lastStep%2d: position: $splitText%8s pattern: $splitTemplate%8s forks: $splitForks, $scoreType $score%2d")
       } else {
-        println(f"$action $lastStep%2d to $step%2d: position: $splitText%8s pattern: $splitTemplate%8s, $scoreType $score%2d")
+        println(f"$action $step%2d $connector%4s $lastStep%2d: position: $splitText%8s pattern: $splitTemplate%8s, $scoreType $score%2d")
       }
     }
   }
