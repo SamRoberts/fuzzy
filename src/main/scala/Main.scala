@@ -159,7 +159,7 @@ case class Template(template: String, trace: Boolean = false) {
     if (trace) {
       val splitText = Util.indexed(text, textIx)
       val splitTemplate = Util.indexed(template, templateIx)
-      println(f"$action $step%2d $connector%4s $lastStep%2d: position: $splitText%8s pattern: $splitTemplate%8s, $scoreType $score%2d")
+      println(f"${Console.YELLOW}$action $step%2d $connector%4s $lastStep%2d: position: $splitText%8s pattern: $splitTemplate%8s, $scoreType $score%2d${Console.RESET}")
     }
   }
 }
@@ -185,7 +185,7 @@ case class Table[T : scala.reflect.ClassTag](text: String, template: String, ele
 object Util {
   def indexed(text: String, ix: Int): String = {
     val spaced = text + " "
-    spaced.substring(0, ix) + Console.BLUE_B + spaced(ix) + Console.RESET + spaced.substring(ix+1)
+    spaced.substring(0, ix) + Console.BLUE_B + spaced(ix) + Console.BLACK_B + spaced.substring(ix+1)
   }
 }
 
