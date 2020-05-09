@@ -1,3 +1,22 @@
+// TODO turn into tool which can write matched text and/or report score, and turn
+//      current main method into proper tests. Attempt Scala hedgehog tests only?
+
+// TODO get benchmarks up and running and then start investigating whether we can make
+//      code more optimised and safer. Current approach is both overly simplistic but also
+//      more skeptical of creating new objects than standard Scala code.
+
+// TODO Use a logical representation of template rather than raw template. This will make it
+//      easier to do other changes. Probably not realistic to do escaping before this.
+
+// TODO support escaping within template pattern
+
+// TODO Replace unstructured fork and jump instructions into scope instructions. To avoid
+//      object allocations (but will have benchmarks to judge if I really care), can parse
+//      template ahead of time to find out max env depth and pre-allocate env arrays.
+
+// TODO once scope instructions are done, consider additional outputs, like printing
+//      text which matched scope, similar to regex captures. Consider named scopes.
+
 object Main {
 
   def main(args: Array[String]): Unit = {
@@ -14,7 +33,8 @@ object Main {
       ("za*bb", "zbb", 0),
       ("a..*bb", "afaffbb", 0),
       ("z(ac)*z", "zz", 0),
-      ("z(ac)*z", "zacdacacz", 1),
+      ("z(ac)*z", "zacaacacz", 1),
+      ("z(a*c)*z", "zacaacacz", 0),
       ("z(a*c)*z", "zacdaaacaacz", 1),
       (".*b.*c", "zzzzzbxxxxc", 0),
       (".*b.*c", "yyyy", 2)
@@ -47,17 +67,6 @@ case class Template(template: String, trace: Boolean = false) {
   def withTrace: Template = copy(trace = true)
 
   val flow = ControlFlow(template)
-
-  // TODO implement matching. Could be higher priority, but how to implement matching?
-  //      Can we record at each table index what the index of the next step we took was?
-  //      Then how to recover match from that?
-  //      Seems to me this is where Template class with pattern <=> tableIx comes in handy
-  //      But want proper repeating patterns first in case it stuffs up table logic
-  //      So do repeating patterns first, then template/templateIx change, then matching
-  // TODO get benchmarks up and running and then start investigating whether we can make
-  //      code more optimised and safer. Current approach is both overly simplistic but also
-  //      more skeptical of creating new objects than standard Scala code.
-  // TODO Use a logical representation of template rather than raw template.
 
   def score(text: String): Match = {
     var stepCount = 0
@@ -111,9 +120,8 @@ case class Template(template: String, trace: Boolean = false) {
         val rawScore = inner(step, newTextIx, newTemplateIx, acc+penalty)
         val score    = if (set(rawScore)) rawScore+penalty else rawScore
 
-        // condition only works as unset numbers are negative
-        if (set(score) && score < result) {
-          result         = score
+        if (set(score) && (!set(result) || score < result)) {
+          result        = score
           resTextIx     = newTextIx
           resTemplateIx = newTemplateIx
         }
@@ -185,9 +193,21 @@ case class Template(template: String, trace: Boolean = false) {
 }
 
 case class Match(text: String, template: Template, score: Int, tableRec: Table[Int]) {
-  def trace(textIx: Int, templateIx: Int): List[(Int, Int)] = {
-    val nextTableIx = tableRec(textIx, templateIx)
-    (textIx -> templateIx) :: trace(tableRec.textIx(nextTableIx), tableRec.templateIx(nextTableIx))
+
+  def matchedText: String =
+    trace().sliding(2).collect {
+      case List((textIxNow, templateIxNow), (textIxNext, templateIxNext)) if (textIxNext == textIxNow+1) && (templateIxNext == templateIxNow+1) && textIxNow < text.length =>
+        text(textIxNow)
+    }.mkString
+
+  def trace(textIx: Int = 0, templateIx: Int = 0): List[(Int, Int)] = {
+    // TODO put set somewhere accessible, or use scala's value types to represent index
+    if (textIx >= 0 && templateIx >= 0) {
+      val nextTableIx = tableRec(textIx, templateIx)
+      (textIx -> templateIx) :: trace(tableRec.textIx(nextTableIx), tableRec.templateIx(nextTableIx))
+    } else {
+      Nil
+    }
   }
 }
 
