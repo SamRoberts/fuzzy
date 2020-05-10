@@ -2,7 +2,7 @@ Fuzzy Parser
 ============
 
 Currently just a fuzzy regex inspired parser at the moment, but hopefully the
-fuzzy fanily will grow.
+fuzzy family will grow.
 
 Run fuzzy regex by laughing and moving on to the next tool, until such time as
 we actually have a useful main class.
