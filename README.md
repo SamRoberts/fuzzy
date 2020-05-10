@@ -21,6 +21,8 @@ To do
   make it easier to do other changes. Probably not realistic to do escaping
   before this.
 - Support escaping within template pattern.
+- A lot of hedgehog pattern gen logic might be easier to express with logical
+  template representation.
 - Replace unstructured fork and jump instructions into scope instructions. To
   avoid object allocations (but will have benchmarks to judge if I really
   care), can parse template ahead of time to find out max env depth and

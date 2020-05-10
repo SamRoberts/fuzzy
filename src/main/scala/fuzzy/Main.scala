@@ -5,8 +5,6 @@ object Main {
   def main(args: Array[String]): Unit = {
     val cases = List(
       ("aa", "aba", 1),
-      ("a.a", "aba", 0),
-      ("aa.", "aba", 2),
       ("aa.*bb", "afaffbb", 1),
       ("za*bb", "zbb", 0),
       ("a..*bb", "afaffbb", 0),
