@@ -4,11 +4,7 @@ object Main {
 
   def main(args: Array[String]): Unit = {
     val cases = List(
-      ("", "", 0),
-      ("", "aabb", 4),
-      ("aa", "", 2),
       ("a*", "", 0),
-      (".*", "aabb", 0),
       ("aa", "aba", 1),
       ("a.a", "aba", 0),
       ("aa.", "aba", 2),

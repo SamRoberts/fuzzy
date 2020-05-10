@@ -12,6 +12,7 @@ To do
 
 - Turn into tool which can write matched text and/or report score, and turn
   current main method into proper tests. Attempt Scala hedgehog tests only?
+- Ye olde split between library and application.
 - Get benchmarks up and running and then start investigating whether we can
   make code more optimised and safer. Current approach is both overly
   simplistic but also more skeptical of creating new objects than standard
