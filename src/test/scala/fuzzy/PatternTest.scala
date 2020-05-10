@@ -9,7 +9,8 @@ object PatternTest extends Properties {
     List(
       property("empty pattern matching arbitrary text", testEmptyMatchArb),
       property("literal pattern matching empty text", testLiteralMatchEmpty),
-      property(".* matching arbitrary text", testWildcardKleeneMatchArb)
+      property(".* matching arbitrary text", testWildcardKleeneMatchArb),
+      property("<a>* matching arbitrary text with likely some <a>s", testLiteralCharKleeneMatchArb)
     )
 
   def testEmptyMatchArb: Property = {
@@ -43,6 +44,19 @@ object PatternTest extends Properties {
     } yield {
       (result.score ==== 0) and
       (result.matchedText ==== text)
+    }
+  }
+
+  def testLiteralCharKleeneMatchArb: Property = {
+    for {
+      literal <- PatternGen.literalChar.forAll
+      text    <- Gen.string(Gen.frequency1(9 -> Gen.unicode, 1 -> Gen.constant(literal)), Range.linear(0, 100)).forAll
+      pattern  = Pattern(literal.toString + PatternGen.kleene)
+      result   = pattern.score(text)
+    } yield {
+      val matchLength = text.count(_ == literal)
+      (result.score ==== (text.length - matchLength)) and
+      (result.matchedText ==== literal.toString.repeat(matchLength))
     }
   }
 }
