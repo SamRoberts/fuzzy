@@ -1,4 +1,4 @@
-name := "reverse-template"
+name := "fuzzy"
 version := "0.1.0"
 
 resolvers += "bintray-scala-hedgehog" at "https://dl.bintray.com/hedgehogqa/scala-hedgehog"
