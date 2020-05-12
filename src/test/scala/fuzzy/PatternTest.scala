@@ -10,9 +10,14 @@ object PatternTest extends Properties {
       property("empty pattern matching arbitrary text", testEmptyMatchArb),
       property("literal pattern matching empty text", testLiteralMatchEmpty),
       property("literal pattern matching the same text", testLiteralMatchSame),
+      // TODO the match different test can fail if one changed character is the same as a different original character
+      //      I think this requires that they be next to one another to be worth it for algorithm score differently?
+      //      fix up test so that original character and changed characters come from different alphabets?
+      property("literal pattern matching a different text", testLiteralMatchDifferent),
       property("literal pattern matching a smaller text", testLiteralMatchSubset),
       property("literal pattern matching a larger text", testLiteralMatchSuperset),
       property(".* matching arbitrary text", testWildcardKleeneMatchArb),
+      property(".* matching arbitrary subset of text", testWildcardKleeneMatchArbSubset),
       property("<a>* matching arbitrary text with likely some <a>s", testLiteralCharKleeneMatchArb),
       property(". matches more than <a>", testWildcardMatchesMoreThanLiteral)
     )
@@ -49,6 +54,19 @@ object PatternTest extends Properties {
     }
   }
 
+  def testLiteralMatchDifferent: Property = {
+    for {
+      pattern <- PatternGen.literalString(Range.linear(0, 100)).forAll
+      text    <- PatternGen.transform(pattern, 2, 1, c => Gen.unicode.filter(_ != c).map(_.toString)).forAll
+      result   = Pattern(pattern).score(text)
+    } yield {
+      val expectedMatch = text.zip(pattern).collect { case (tc,pc) if tc == pc => tc }.mkString
+      (result.score ==== 2*(text.length - expectedMatch.length)) and
+      (result.matchedText ==== expectedMatch)
+    }
+  }
+
+
   def testLiteralMatchSubset: Property = {
     for {
       pattern <- PatternGen.literalString(Range.linear(0, 100)).forAll
@@ -61,13 +79,14 @@ object PatternTest extends Properties {
   }
 
   def testLiteralMatchSuperset: Property = {
+    val insertedString = PatternGen.matchString(Range.constant(1,1))
     for {
       pattern <- PatternGen.literalString(Range.linear(0, 100)).forAll
       text    <- PatternGen.intercalate(
                    pattern, 2, 1,
-                   PatternGen.matchString(Range.constant(1, 1)),
-                   (_, _) => PatternGen.matchString(Range.constant(1, 1)),
-                   PatternGen.matchString(Range.constant(1, 1))
+                   insertedString,
+                   (_, _) => insertedString,
+                   insertedString
                  ).forAll
       result   = Pattern(pattern).score(text)
     } yield {
@@ -82,6 +101,20 @@ object PatternTest extends Properties {
     for {
       text  <- Gen.string(Gen.unicode, Range.linear(0, 100)).forAll
       result = pattern.score(text)
+    } yield {
+      (result.score ==== 0) and
+      (result.matchedText ==== text)
+    }
+  }
+
+  def testWildcardKleeneMatchArbSubset: Property = {
+    for {
+      prefix     <- PatternGen.literalString(Range.linear(0, 50)).forAll
+      suffix     <- PatternGen.literalString(Range.linear(0, 50)).forAll
+      textMiddle <- Gen.string(Gen.unicode, Range.linear(0, 100)).forAll
+      pattern     = prefix + ".*" + suffix
+      text        = prefix + textMiddle + suffix
+      result      = Pattern(pattern).score(text)
     } yield {
       (result.score ==== 0) and
       (result.matchedText ==== text)
