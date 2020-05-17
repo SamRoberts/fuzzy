@@ -10,9 +10,6 @@ object PatternTest extends Properties {
       property("empty pattern matching arbitrary text", testEmptyMatchArb),
       property("literal pattern matching empty text", testLiteralMatchEmpty),
       property("literal pattern matching the same text", testLiteralMatchSame),
-      // TODO the match different test can fail if one changed character is the same as a different original character
-      //      I think this requires that they be next to one another to be worth it for algorithm score differently?
-      //      fix up test so that original character and changed characters come from different alphabets?
       property("literal pattern matching a different text", testLiteralMatchDifferent),
       property("literal pattern matching a smaller text", testLiteralMatchSubset),
       property("literal pattern matching a larger text", testLiteralMatchSuperset),
@@ -55,10 +52,20 @@ object PatternTest extends Properties {
   }
 
   def testLiteralMatchDifferent: Property = {
+      // the algorithm will take a penalty of 2 to overcome a single character difference
+      // however, it may do better if two consecutive characters change in such a way that the
+      // overall string pair effectively only has a single addition or subtraction
+      // so this test must ensure that changed characters are different to original characters
+    val gen = for {
+      (charGen, mapper) <- PatternGen.alphabetGenAndMapper(Range.linear(1, 100))
+      pattern           <- Gen.string(charGen, Range.linear(0, 100))
+      text              <- PatternGen.transform(pattern, 2, 1, c => Gen.constant(mapper(c).toString))
+    } yield (pattern, text)
+
     for {
-      pattern <- PatternGen.literalString(Range.linear(0, 100)).forAll
-      text    <- PatternGen.transform(pattern, 2, 1, c => Gen.unicode.filter(_ != c).map(_.toString)).forAll
-      result   = Pattern(pattern).score(text)
+      patternAndText <- gen.forAll
+      (pattern, text) = patternAndText
+      result          = Pattern(pattern).score(text)
     } yield {
       val expectedMatch = text.zip(pattern).collect { case (tc,pc) if tc == pc => tc }.mkString
       (result.score ==== 2*(text.length - expectedMatch.length)) and

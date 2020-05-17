@@ -31,18 +31,18 @@ object PatternGen {
    *
    *  The alphabet will have at least one character. Range lower bound should be largeer than 0.
    */
-  def alphabetGenAndTranslation(range: Range[Int]): Gen[(Gen[Char], Char => Char)] =
+  def alphabetGenAndMapper(range: Range[Int]): Gen[(Gen[Char], Char => Char)] =
     for {
       uniqChars    <- Gen2.uniqList[Char](PatternGen.literalLargeChar, range.map(_*2))
-      mapping       = uniqChars.sliding(2,2).map { case List(a,b) => (a,b) }.toList
+      mapping       = uniqChars.sliding(2,2).collect { case List(a,b) => (a,b) }.toList
       (head, tail) <- mapping match {
                         case head :: tail => Gen.constant(head ->tail)
                         case _            => Gen.discard
       }
-      alphabetGen   = Gen.element(head._1, tail.map(_._1))
-      mapFunction   = mapping.toMap
     } yield {
-      (alphabetGen, mapFunction)
+      val alphabetGen = Gen.element(head._1, tail.map(_._1))
+      val mapper      = mapping.toMap
+      (alphabetGen, mapper)
     }
 
   val matchChar: Gen[Char] =
