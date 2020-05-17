@@ -79,7 +79,7 @@ object PatternTest extends Properties {
   }
 
   def testLiteralMatchSuperset: Property = {
-    val insertedString = PatternGen.matchString(Range.constant(1,1))
+    val insertedString = PatternGen.matchString(Range.singleton(1))
     for {
       pattern <- PatternGen.literalString(Range.linear(0, 100)).forAll
       text    <- PatternGen.intercalate(

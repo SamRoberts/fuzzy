@@ -17,8 +17,33 @@ object PatternGen {
       .frequency1(9 -> Gen.alphaNum, 1 -> Gen.unicode)
       .filter(c => !nonLiteralChars.contains(c))
 
+  def literalLargeChar: Gen[Char] =
+    Gen.unicode.filter(c => !nonLiteralChars.contains(c))
+
   def literalString(range: Range[Int]): Gen[String] =
     Gen.string(literalChar, range)
+
+  /** Returns a generator for characters from an arbitrary alphabet, and a mapping from thse characters to others.
+   *
+   *  All characters and mapped characters are unique.
+   *
+   *  The mapping function is total on characters from the alphabet, but is not implemented on other characters.
+   *
+   *  The alphabet will have at least one character. Range lower bound should be largeer than 0.
+   */
+  def alphabetGenAndTranslation(range: Range[Int]): Gen[(Gen[Char], Char => Char)] =
+    for {
+      uniqChars    <- Gen2.uniqList[Char](PatternGen.literalLargeChar, range.map(_*2))
+      mapping       = uniqChars.sliding(2,2).map { case List(a,b) => (a,b) }.toList
+      (head, tail) <- mapping match {
+                        case head :: tail => Gen.constant(head ->tail)
+                        case _            => Gen.discard
+      }
+      alphabetGen   = Gen.element(head._1, tail.map(_._1))
+      mapFunction   = mapping.toMap
+    } yield {
+      (alphabetGen, mapFunction)
+    }
 
   val matchChar: Gen[Char] =
     Gen
