@@ -16,6 +16,7 @@ object PatternTest extends Properties {
       property(".* matching arbitrary text", testWildcardKleeneMatchArb),
       property(".* matching arbitrary subset of text", testWildcardKleeneMatchArbSubset),
       property("<a>* matching arbitrary text with likely some <a>s", testLiteralCharKleeneMatchArb),
+      property("<abc>* matching a repeated different text",  testArbKleeneMatchRepeats),
       property(". matches more than <a>", testWildcardMatchesMoreThanLiteral)
     )
 
@@ -59,7 +60,7 @@ object PatternTest extends Properties {
     val gen = for {
       (charGen, mapper) <- PatternGen.alphabetGenAndMapper(Range.linear(1, 100))
       pattern           <- Gen.string(charGen, Range.linear(0, 100))
-      text              <- PatternGen.transform(pattern, 2, 1, c => Gen.constant(mapper(c).toString))
+      text              <- PatternGen.transformMap(pattern, 2, 1, mapper)
     } yield (pattern, text)
 
     for {
@@ -77,7 +78,7 @@ object PatternTest extends Properties {
   def testLiteralMatchSubset: Property = {
     for {
       pattern <- PatternGen.literalString(Range.linear(0, 100)).forAll
-      text    <- PatternGen.transform(pattern, 2, 1, _ => Gen.constant("")).forAll
+      text    <- PatternGen.transformDel(pattern, 2, 1).forAll
       result   = Pattern(pattern).score(text)
     } yield {
       (result.score ==== (pattern.length - text.length)) and
@@ -141,12 +142,41 @@ object PatternTest extends Properties {
     }
   }
 
+  def testArbKleeneMatchRepeats: Property = {
+    val genBasePatternText = for {
+      (charGen, mapper) <- PatternGen.alphabetGenAndMapper(Range.linear(1, 100))
+      basePattern       <- Gen.string(charGen, Range.linear(1, 100))
+      baseText          <- PatternGen.transformMap(basePattern, 2, 1, mapper)
+    } yield (basePattern, baseText)
+
+    for {
+      bases          <- genBasePatternText.forAll
+      (pattern, text) = bases
+      repeat         <- Gen.int(Range.linear(0, 10)).forAll
+      result          = Pattern(s"($pattern)*").score(text * repeat)
+    } yield {
+      val matchText  = text.zip(pattern).collect { case (tc,pc) if tc == pc => tc }.mkString
+      val matchScore = 2 * (text.length - matchText.length)
+      val skipText   = ""
+      val skipScore  = text.length
+      println("vvvvvvvvvvvvvvvvvvvvvvvvvvv")
+      println("base pattern = [" + pattern + "], length " + pattern.length)
+      println("base text = [" + text + "], length " + text.length)
+      println("repeat = [" + repeat + "]")
+      println("result.match = [" + result.matchedText + "], length " + result.matchedText.length)
+      println("result.score = [" + result.score + "]")
+      println("^^^^^^^^^^^^^^^^^^^^^^^^^^^")
+      (result.score ==== (matchScore min skipScore) * repeat) and
+      ((result.matchedText ==== matchText * repeat) or (result.matchedText ==== skipText * repeat))
+    }
+  }
+
   def testWildcardMatchesMoreThanLiteral: Property = {
     // TODO generate any arbitrary complex pattern as long as we can pick out match characters to transform
     for {
       pattern1 <- PatternGen.matchString(Range.linear(0, 100)).forAll
-      pattern2 <- PatternGen.transform(pattern1, 4, 1, _ => Gen.constant(".")).forAll
-      text     <- PatternGen.transform(pattern1, 2, 1, _ => Gen.unicode.map(_.toString)).forAll
+      pattern2 <- PatternGen.transformMap(pattern1, 4, 1, _ => '.').forAll
+      text     <- PatternGen.transformChar(pattern1, 2, 1, _ => Gen.unicode).forAll
       result1   = Pattern(pattern1).score(text)
       result2   = Pattern(pattern2).score(text)
     } yield {

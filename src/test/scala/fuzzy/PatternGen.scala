@@ -62,6 +62,15 @@ object PatternGen {
       Gen.frequency1(unchangedFrequency -> Gen.constant(c.toString), changeFrequency -> change(c))
     }.map(_.mkString)
 
+  def transformChar(string: String, unchangedFrequency: Int, changeFrequency: Int, change: Char => Gen[Char]): Gen[String] =
+    transform(string, unchangedFrequency, changeFrequency, (c: Char) => change(c).map(_.toString))
+
+  def transformMap(string: String, unchangedFrequency: Int, changeFrequency: Int, change: Char => Char): Gen[String] =
+    transform(string, unchangedFrequency, changeFrequency, (c: Char) => Gen.constant(change(c).toString))
+
+  def transformDel(string: String, unchangedFrequency: Int, deleteFrequency: Int): Gen[String] =
+    transform(string, unchangedFrequency, deleteFrequency, (c: Char) => Gen.constant(""))
+
   def intercalate(
     string: String,
     unchangedFrequency: Int,
