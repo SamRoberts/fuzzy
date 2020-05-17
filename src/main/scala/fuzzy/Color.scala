@@ -7,6 +7,7 @@ object Color {
 
   val stdBack   = Console.BLACK_B
   val focusBack = Console.BLUE_B
+  val errBack   = Console.RED_B
 
   val std = stdText + stdBack
 }
