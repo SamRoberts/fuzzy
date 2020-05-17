@@ -58,7 +58,7 @@ object PatternTest extends Properties {
       // overall string pair effectively only has a single addition or subtraction
       // so this test must ensure that changed characters are different to original characters
     val gen = for {
-      (charGen, mapper) <- PatternGen.alphabetGenAndMapper(Range.linear(1, 100))
+      (charGen, mapper) <- PatternGen.alphabetGenAndMapper(Range.linear(1, 30))
       pattern           <- Gen.string(charGen, Range.linear(0, 100))
       text              <- PatternGen.transformMap(pattern, 2, 1, mapper)
     } yield (pattern, text)
@@ -144,7 +144,7 @@ object PatternTest extends Properties {
 
   def testArbKleeneMatchRepeats: Property = {
     val genBasePatternText = for {
-      (charGen, mapper) <- PatternGen.alphabetGenAndMapper(Range.linear(1, 100))
+      (charGen, mapper) <- PatternGen.alphabetGenAndMapper(Range.linear(1, 30))
       basePattern       <- Gen.string(charGen, Range.linear(1, 100))
       baseText          <- PatternGen.transformMap(basePattern, 2, 1, mapper)
     } yield (basePattern, baseText)
