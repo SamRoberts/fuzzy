@@ -3,6 +3,7 @@ package fuzzy
 import hedgehog._
 import hedgehog.runner._
 
+/** Simple pattern tests that check the exact match and score of simple pattern building blocks. */
 object PatternTest extends Properties {
 
   def tests: List[Test] =
@@ -15,9 +16,7 @@ object PatternTest extends Properties {
       property("literal pattern matching a larger text", testLiteralMatchSuperset),
       property(".* matching arbitrary text", testWildcardKleeneMatchArb),
       property(".* matching arbitrary subset of text", testWildcardKleeneMatchArbSubset),
-      property("<a>* matching arbitrary text with likely some <a>s", testLiteralCharKleeneMatchArb),
-      property("<abc>* matching a repeated different text",  testArbKleeneMatchRepeats),
-      property(". matches more than <a>", testWildcardMatchesMoreThanLiteral)
+      property("<a>* matching arbitrary text with likely some <a>s", testLiteralCharKleeneMatchArb)
     )
 
   def testEmptyMatchArb: Property = {
@@ -139,55 +138,6 @@ object PatternTest extends Properties {
       val matchLength = text.count(_ == literal)
       (result.score ==== (text.length - matchLength)) and
       (result.matchedText ==== literal.toString.repeat(matchLength))
-    }
-  }
-
-  def testArbKleeneMatchRepeats: Property = {
-    // TODO this test is just garbage. My intuitive logic about how things would be scored is totally wrong.
-    //      for instance, (aaa)* matches "aabaab" by using the three a's in one repeat of the pattern to match
-    //      3 out of 4 a's in the text, and then skipping the rest of the text. This beats either approach I
-    //      expected I'd see below. In particular, the match is not homogenous among repeats.
-    //
-    //      I think exactly matching partal matches across repeats is just too ambitious for me atm. I can test
-    //      the exact match.
-    //
-    //      There is still room for higher level behaviour tests, but they should check score is <= some obvious
-    //      possible match, rather than trying to guess the properties of the optimal match.
-    //
-    //      I think I am going to separate out exact tests in simple situations (PatternTest) from upper bound
-    //      tests in complex combined situations (PatternComplexTest?). Complex tests are <=, simple are ==.
-
-    val genBasePatternText = for {
-      (charGen, mapper) <- PatternGen.alphabetGenAndMapper(Range.linear(1, 30))
-      basePattern       <- Gen.string(charGen, Range.linear(1, 100))
-      baseText          <- PatternGen.transformMap(basePattern, 2, 1, mapper)
-    } yield (basePattern, baseText)
-
-    for {
-      bases          <- genBasePatternText.forAll
-      (pattern, text) = bases
-      repeat         <- Gen.int(Range.linear(0, 10)).forAll
-      result          = Pattern(s"($pattern)*").score(text * repeat)
-    } yield {
-      val matchText  = text.zip(pattern).collect { case (tc,pc) if tc == pc => tc }.mkString
-      val matchScore = 2 * (text.length - matchText.length)
-      val skipText   = ""
-      val skipScore  = text.length
-      (result.score ==== (matchScore min skipScore) * repeat) and
-      ((result.matchedText ==== matchText * repeat) or (result.matchedText ==== skipText * repeat))
-    }
-  }
-
-  def testWildcardMatchesMoreThanLiteral: Property = {
-    // TODO generate any arbitrary complex pattern as long as we can pick out match characters to transform
-    for {
-      pattern1 <- PatternGen.matchString(Range.linear(0, 100)).forAll
-      pattern2 <- PatternGen.transformMap(pattern1, 4, 1, _ => '.').forAll
-      text     <- PatternGen.transformChar(pattern1, 2, 1, _ => Gen.unicode).forAll
-      result1   = Pattern(pattern1).score(text)
-      result2   = Pattern(pattern2).score(text)
-    } yield {
-      Result.diffNamed("=== Literal pattern score less than wildcard pattern ===", result1.score, result2.score)(_ >= _)
     }
   }
 }
