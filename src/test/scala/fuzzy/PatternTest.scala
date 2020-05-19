@@ -16,7 +16,8 @@ object PatternTest extends Properties {
       property("literal pattern matching a larger text", testLiteralMatchSuperset),
       property(".* matching arbitrary text", testWildcardKleeneMatchArb),
       property(".* matching arbitrary subset of text", testWildcardKleeneMatchArbSubset),
-      property("<a>* matching arbitrary text with likely some <a>s", testLiteralCharKleeneMatchArb)
+      property("<a>* matching arbitrary text with likely some <a>s", testLiteralCharKleeneMatchArb),
+      property("(<abc>)* matching repetitions of <abc>", testGroupKleeneMatchSameRepeated)
     )
 
   def testEmptyMatchArb: Property = {
@@ -138,6 +139,17 @@ object PatternTest extends Properties {
       val matchLength = text.count(_ == literal)
       (result.score ==== (text.length - matchLength)) and
       (result.matchedText ==== literal.toString.repeat(matchLength))
+    }
+  }
+  def testGroupKleeneMatchSameRepeated: Property = {
+    for {
+      literal <- PatternGen.literalString(Range.linear(0, 50)).forAll
+      repeat  <- Gen.int(Range.linear(0, 5)).forAll
+      text     = literal * repeat
+      result   = Pattern(s"($literal)*").score(text)
+    } yield {
+      (result.score ==== 0) and
+      (result.matchedText ==== text)
     }
   }
 }

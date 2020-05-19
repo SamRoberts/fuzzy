@@ -1,34 +1,19 @@
 package fuzzy
 
+import io.Source
+
 object Main {
 
+  // TODO use decline for CLI
+  // TODO use os-lib or see what cats has for file IO, and properly close file too
+
   def main(args: Array[String]): Unit = {
-    val cases = List(
-      ("z(a*c)*z", "zacaacacz", 0),
-      ("z(a*c)*z", "zacdaaacaacz", 1),
-      (".*b.*c", "zzzzzbxxxxc", 0),
-      (".*b.*c", "yyyy", 2)
-    )
+    val pattern = args(0)
+    val file    = args(1)
+    val text    = Source.fromFile(file, "UTF-8").mkString
 
-    val results = cases.map { case (pattern, text, expected) => (pattern,  text, expected, Pattern(pattern).score(text).score) }
-
-    results.filter { case (_, _, expected, actual) => expected != actual }.foreach {
-      case (pattern, text, expected, actual) =>
-        Pattern(pattern).withTrace.score(text)
-        print(Color.std)
-        println(s"final score $actual does not equal $expected")
-        println()
-    }
-
-    print(Color.std)
-    println(" pattern  | text         | expected | actual ")
-    println("----------|--------------|----------|--------")
-    println(
-      results.map { case (pattern, text, expected, actual) =>
-        val color = if (expected == actual) Color.stdText else Color.errText
-        f"$color $pattern%8s | $text%12s | $expected%8d | $actual%6d "
-      }.mkString("\n")
-    )
+    println(Pattern(pattern).score(text).tracePretty)
   }
+
 }
 
