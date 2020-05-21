@@ -16,6 +16,37 @@ case class Pattern(pattern: String, trace: Boolean = false) {
     val tableAcc = Table[Int](text, pattern, -1)
     val tableRec = Table[Int](text, pattern, -1)
 
+    // TODO we must remove non tail recursive call to process large texts ... but how?
+    //
+    // it might actually be easiest to go straight to flood fill algorithm, as it makes
+    // path through state straightforward ... but need to work out the details.
+    //
+    // so the flood fill algorithm works backwards from end of text. It says, for each
+    // character in text, if you are at this stage in text then compute the score to
+    // match the rest of the text for all stages in pattern.
+    //
+    // at end of text it can be pre-computed for each pattern.
+    //
+    // first attempt:
+    //
+    // if stage n is computed, then stage n-1 is:
+    //   for each pattern stage,
+    //     for each state transition which involves eating a text character, look at the penalty plus score in stage n
+    //     for each state transition which does NOT involve eating a text character, look at penalty plus incorporate transititions from next pattern state
+    //     now, there is no point in eating an entire kleene loop without consuming text, so this second transition category just boils down to gathering up more (penality, stage n index) comboss
+    //     However, we can walk arbitrary distances forward in pattern, accumulating penalties as we go, so the number of possible transitions is proportional to the size of pattern
+    //
+    // second attempt:
+    //
+    //
+    // if stage n is computed, then stage n-1 is:
+    //   for each pattern stage,
+    //     for each state transition which involves eating a text character, look at the penalty plus score in stage n
+    //     for each state transition which does NOT involve eating a text character,
+    //       do inner walk across pattern only state transitions, avoiding loops and caching results similar to 2 dimensional walk in inner at the moment but simpler as only 1 dimension
+    //       simple approach: use stack for pattern only transitions!
+    //       does simple approach work inside loops if starting point could have been any one of the characters?
+    //       is there a different approach that orders pattern such that we can calculate in single back to front sweep?
     def inner(parentStep: Int, textIx: Int, patternIx: Int, acc: Int): Int = {
       stepCount += 1
       val step = stepCount
