@@ -10,8 +10,12 @@ we actually have a useful main class.
 To do
 -----
 
-- Turn into tool which can write matched text and/or report score, and turn
-  current main method into proper tests. Attempt Scala hedgehog tests only?
+- Write a simple inefficient algorithm to a) check correctness of complex
+  iterative algorithm, and b) help experiment with more powerful parsers.
+  Should do this before the next TODO, as fixing stack space issues will
+  require algorith to look quite different to recursive implementation.
+- Fix out of stack memory issue, I have a bunch of notes about moving to a
+  more predictable looping on Pattern's inner method.
 - Ye olde split between library and application.
 - Get benchmarks up and running and then start investigating whether we can
   make code more optimised and safer. Current approach is both overly
@@ -29,8 +33,6 @@ To do
   pre-allocate env arrays.
 - Once scope instructions are done, consider additional outputs, like printing
   text which matched scope, similar to regex captures. Consider named scopes.
-- Write a simple inefficient algorithm to a) check correctness of complex
-  iterative algorithm, and b) help experiment with more powerful parsers
 - Prove tableRec is valid and there are no loops. If so, try to get rid of
   stack usage completely, replacing it with a loop that fills out mutable
   tables
