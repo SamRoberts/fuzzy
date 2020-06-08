@@ -8,6 +8,7 @@ object PatternTest extends Properties {
 
   def tests: List[Test] =
     List(
+      property("pattern matching simple pattern impl", testSimplePatternImpl),
       property("empty pattern matching arbitrary text", testEmptyMatchArb),
       property("literal pattern matching empty text", testLiteralMatchEmpty),
       property("literal pattern matching the same text", testLiteralMatchSame),
@@ -19,6 +20,19 @@ object PatternTest extends Properties {
       property("<a>* matching arbitrary text with likely some <a>s", testLiteralCharKleeneMatchArb),
       property("(<abc>)* matching repetitions of <abc>", testGroupKleeneMatchSameRepeated)
     )
+
+  def testSimplePatternImpl: Property =
+    for {
+      testPatt <- PatternGen.implPattern(Range.linear(0, 8)).forAll
+      realPatt  = Pattern(testPatt.toString) // TODO share pattern construction code, maybe a type class construction?
+      text     <- PatternGen.implPatternTestString(testPatt).forAll
+      testRes   = testPatt.score(text)
+      realRes   = realPatt.score(text)
+    } yield {
+      realRes.score ==== testRes.score
+      // an implementation can choose from any valid matched text with the lowest score,
+      // so we can't say that matched text must == matched text
+    }
 
   def testEmptyMatchArb: Property = {
     val pattern = Pattern("")
@@ -73,7 +87,6 @@ object PatternTest extends Properties {
       (result.matchedText ==== expectedMatch)
     }
   }
-
 
   def testLiteralMatchSubset: Property = {
     for {
@@ -138,7 +151,7 @@ object PatternTest extends Properties {
     } yield {
       val matchLength = text.count(_ == literal)
       (result.score ==== (text.length - matchLength)) and
-      (result.matchedText ==== literal.toString.repeat(matchLength))
+      (result.matchedText ==== literal.toString * matchLength)
     }
   }
   def testGroupKleeneMatchSameRepeated: Property = {

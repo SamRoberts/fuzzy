@@ -3,6 +3,8 @@ package fuzzy
 import hedgehog._
 import hedgehog.predef._
 
+import fuzzy.impl.{Arity => ImplArity, Element => ImplElement, Pattern => ImplPattern}
+
 object PatternGen {
   val kleene     = '*'
   val wildcard   = '.'
@@ -17,11 +19,61 @@ object PatternGen {
       .frequency1(9 -> Gen.alphaNum, 1 -> Gen.unicode)
       .filter(c => !nonLiteralChars.contains(c))
 
+  val matchChar: Gen[Char] =
+    Gen
+      .frequency1(9 -> literalChar, 1 -> Gen.constant(wildcard))
+
   def literalLargeChar: Gen[Char] =
     Gen.unicode.filter(c => !nonLiteralChars.contains(c))
 
   def literalString(range: Range[Int]): Gen[String] =
     Gen.string(literalChar, range)
+
+  val singleKleeneString: Gen[String] =
+    matchChar.map(_.toString + kleene.toString)
+
+  /** range represents number of top level pattern elements. */
+  def implPattern(range: Range[Int]): Gen[ImplPattern] =
+    implElements(range).map(ImplPattern(_))
+
+  def implElements(range: Range[Int]): Gen[List[ImplElement]] =
+    Gen.sized { size =>
+      if (range.upperBound(size) <= 0) Gen.constant(Nil)
+      else                             Gen.list(implElement(range.map(_ / 2)), range)
+    }
+
+  def implElement(range: Range[Int]): Gen[ImplElement] =
+    Gen.frequency1(
+      4 -> literalChar.map(ImplElement.Lit(_)),
+      1 -> Gen.constant(ImplElement.Any),
+      1 -> forTupled(implArity, implElements(range)).map { case (a, es) => ImplElement.Push(a, es) }
+    )
+
+  def implArity: Gen[ImplArity] =
+    Gen.element1(ImplArity.One, ImplArity.Many)
+
+  def implPatternTestString(implPattern: ImplPattern): Gen[String] =
+    Gen.choice1(
+      Gen.constant(""),
+      implPatternMatchingString(implPattern),
+      implPatternMatchingString(implPattern).flatMap(s =>
+        transform(s, 3, 1, _ => Gen.string(Gen.alphaNum, Range.linear(0, 3)))),
+      Gen.string(Gen.alphaNum, Range.linear(0, 16))
+    )
+
+  def implPatternMatchingString(implPattern: ImplPattern): Gen[String] =
+    implElementsMatchingString(implPattern.elements)
+
+  def implElementsMatchingString(implElements: List[ImplElement]): Gen[String] =
+    traverse(implElements)(implElementMatchingString).map(_.mkString)
+
+  def implElementMatchingString(implElement: ImplElement): Gen[String] =
+    implElement match {
+      case ImplElement.Lit(c)                   => Gen.constant(c.toString)
+      case ImplElement.Any                      => Gen.alphaNum.map(_.toString)
+      case ImplElement.Push(ImplArity.One,  es) => implElementsMatchingString(es)
+      case ImplElement.Push(ImplArity.Many, es) => Gen.list(implElementsMatchingString(es), Range.linear(0, 3)).map(_.mkString)
+    }
 
   /** Returns a generator for characters from an arbitrary alphabet, and a mapping from thse characters to others.
    *
@@ -47,17 +99,8 @@ object PatternGen {
     }
   }
 
-  val matchChar: Gen[Char] =
-    Gen
-      .frequency1(9 -> literalChar, 1 -> Gen.constant(wildcard))
-
   def matchString(range: Range[Int]): Gen[String] =
     Gen.string(matchChar, range)
-
-  val singleKleeneString: Gen[String] =
-    matchChar.map(_.toString + kleene.toString)
-
-  def pattern(genString: Gen[String]): Gen[Pattern] = genString.map(Pattern(_))
 
   def transform(string: String, unchangedFrequency: Int, changeFrequency: Int, change: Char => Gen[String]): Gen[String] =
     traverse(string.toList) { c =>
