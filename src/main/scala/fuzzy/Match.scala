@@ -1,6 +1,6 @@
 package fuzzy
 
-case class Match(text: String, pattern: Pattern, score: Int, tableRec: Table[Int]) {
+case class Match(text: String, pattern: Matcher, score: Int, tableRec: Table[Int]) {
 
   def matchedText: String =
     trace().sliding(2).collect {

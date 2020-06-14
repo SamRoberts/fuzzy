@@ -36,7 +36,7 @@ object PatternUpperBoundTest extends Properties {
       bases          <- genBasePatternText.forAll
       (pattern, text) = bases
       repeat         <- Gen.int(Range.linear(0, 5)).forAll
-      result          = Pattern(s"($pattern)*").score(text * repeat)
+      result          = Matcher(s"($pattern)*").score(text * repeat)
     } yield {
       val matchScore = repeat * 2 * (text.zip(pattern).count { case (tc,pc) => tc != pc })
       val skipScore  = repeat * text.length
@@ -51,8 +51,8 @@ object PatternUpperBoundTest extends Properties {
       pattern1 <- PatternGen.matchString(Range.linear(0, 100)).forAll
       pattern2 <- PatternGen.transformMap(pattern1, 4, 1, _ => '.').forAll
       text     <- PatternGen.transformChar(pattern1, 2, 1, _ => Gen.unicode).forAll
-      result1   = Pattern(pattern1).score(text)
-      result2   = Pattern(pattern2).score(text)
+      result1   = Matcher(pattern1).score(text)
+      result2   = Matcher(pattern2).score(text)
     } yield {
       Result.diffNamed("=== Literal pattern score less than wildcard pattern ===", result1.score, result2.score)(_ >= _)
     }

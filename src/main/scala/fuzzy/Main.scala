@@ -13,7 +13,7 @@ object Main {
     val pattern     = Source.fromFile(patternFile, "UTF-8").mkString
     val text        = Source.fromFile(textFile, "UTF-8").mkString
 
-    println(Pattern(pattern).score(text).matchedText)
+    println(Matcher(pattern).score(text).matchedText)
   }
 
 }

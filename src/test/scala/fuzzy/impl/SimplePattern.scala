@@ -1,5 +1,44 @@
 package fuzzy.impl
 
+import fuzzy.PatternFactory
+
+object Matcher {
+
+  import Element._
+  import Arity._
+  import Step._
+
+  def score(pattern: Pattern, text: String): Match =
+    score(pattern.elements, text.toList, Nil, false)
+
+  def score(pattern: List[Element], text: List[Char], env: List[Scope], progressed: Boolean): Match = (pattern, env, text) match {
+    case (Nil,            Nil,       Nil)           => Match(Nil)
+    case (Nil,            Nil, t :: rest)           => SkipText(t)  +: score(Nil, rest, env, progressed)
+
+    case (Lit(p) :: next, env, Nil      )           => SkipLit(p)   +: score(next, Nil, env, progressed)
+    case (Lit(p) :: next, env, t :: rest) if p == t => MatchChar(p) +: score(next, rest, env, true)
+    case (Lit(p) :: next, env, t :: rest) if p != t => (SkipLit(p)  +: score(next, t :: rest, env, progressed)) or
+                                                       (SkipText(t) +: score(Lit(p) :: next, rest, env, true))
+
+    case (Any :: next,    env, Nil      )           => SkipAny +: score(next, Nil, env, progressed)
+    case (Any :: next,    env, t :: rest)           => MatchChar(t) +: score(next, rest, env, true)
+
+    case (Push(One,  start) :: after, env, text)    => Enter +: score(start, text, Scope(One,  start, after, progressed) :: env, false)
+    case (Push(Many, start) :: after, env, text)    => (Enter +: score(start, text, Scope(Many, start, after, progressed) :: env, false)) or
+                                                       score(after, text, env, progressed)
+
+    case (Nil, Scope(One,  _,     after, afterProgressed) :: env, text)               =>
+      Leave +: score(after, text, env, afterProgressed)
+
+    case (Nil, Scope(Many, _,     after, afterProgressed) :: env, text) if !progressed =>
+      Leave +: score(after, text, env, afterProgressed)
+
+    case (Nil, Scope(Many, start, after, afterProgressed) :: env, text) if progressed  =>
+      score(start, text, Scope(Many, start, after, afterProgressed) :: env, false) or
+      (Leave +: score(after, text, env, afterProgressed))
+  }
+}
+
 case class Match(steps: List[Step]) {
 
   import Step._
@@ -55,9 +94,6 @@ case class Pattern(elements: List[Element]) {
   import Arity._
   import Element._
 
-  def score(text: String): Match =
-    Pattern.score(this, text)
-
   override def toString: String =
     elements.map {
       case Lit(c) => c.toString
@@ -77,70 +113,27 @@ object Pattern {
   import Arity._
   import Step._
 
-  def apply(pattern: String): Pattern = {
-    val (rest, parsed) = parse(pattern.toList, 0)
-    if (rest.nonEmpty) throw new Exception(s"end of string not in a pattern: $rest")
-    Pattern(parsed)
-  }
+  implicit val factory = new PatternFactory[Pattern] {
+    type Builder = List[Element]
+    def freeze(builder: Builder): Pattern = Pattern(builder)
 
-  def parse(pattern: List[Char], depth: Int): (List[Char], List[Element]) =
-    parse(pattern, depth, None)
+    def any(text: String): Builder =
+      List(Any)
 
-  def parse(pattern: List[Char], depth: Int, prefix: Element): (List[Char], List[Element]) =
-    parse(pattern, depth, Some(prefix))
+    def lit(char: Char, text: String): Builder =
+      List(Lit(char))
 
-  def parse(pattern: List[Char], depth: Int, prefix: Option[Element]): (List[Char], List[Element]) = {
-    val (rest, parsed) = pattern match {
-      case '*' :: _                  => throw new Exception("unexepcted asterix")
-      case Nil         if depth >= 1 => throw new Exception("unclosed brackets")
-      case ')' :: rest if depth == 0 => throw new Exception("unmatched closing bracket")
+    def group(inside: Builder, textPre: String, textPost: String): Builder =
+      List(Push(One, inside))
 
-      case Nil         if depth == 0 => (Nil, Nil)
-      case ')' :: rest if depth >= 1 => (rest, Nil)
-
-      case '(' :: rest               => parse(rest, depth+1) match {
-        case ('*' :: after, inside)    => parse(after, depth, Push(Many, inside))
-        case (after,        inside)    => parse(after, depth, Push(One,  inside))
+    def kleene(inside: Builder, testPre: String, textPost: String): Builder =
+      inside match {
+        case List(Push(One, inner)) => List(Push(Many, inner))
+        case _                      => List(Push(Many, inside))
       }
-      case '.' :: '*' :: rest        => parse(rest, depth, Push(Many, List(Any)))
-      case c   :: '*' :: rest        => parse(rest, depth, Push(Many, List(Lit(c))))
 
-      case '.' :: rest               => parse(rest, depth, Any)
-      case c :: rest                 => parse(rest, depth, Lit(c))
-    }
-
-    (rest, prefix.toList ++ parsed)
-  }
-
-  def score(pattern: Pattern, text: String): Match =
-    score(pattern.elements, text.toList, Nil, false)
-
-  def score(pattern: List[Element], text: List[Char], env: List[Scope], progressed: Boolean): Match = (pattern, env, text) match {
-    case (Nil,            Nil,       Nil)           => Match(Nil)
-    case (Nil,            Nil, t :: rest)           => SkipText(t)  +: score(Nil, rest, env, progressed)
-
-    case (Lit(p) :: next, env, Nil      )           => SkipLit(p)   +: score(next, Nil, env, progressed)
-    case (Lit(p) :: next, env, t :: rest) if p == t => MatchChar(p) +: score(next, rest, env, true)
-    case (Lit(p) :: next, env, t :: rest) if p != t => (SkipLit(p)  +: score(next, t :: rest, env, progressed)) or
-                                                       (SkipText(t) +: score(Lit(p) :: next, rest, env, true))
-
-    case (Any :: next,    env, Nil      )           => SkipAny +: score(next, Nil, env, progressed)
-    case (Any :: next,    env, t :: rest)           => MatchChar(t) +: score(next, rest, env, true)
-
-    case (Push(One,  start) :: after, env, text)    => Enter +: score(start, text, Scope(One,  start, after, progressed) :: env, false)
-    case (Push(Many, start) :: after, env, text)    => (Enter +: score(start, text, Scope(Many, start, after, progressed) :: env, false)) or
-                                                       score(after, text, env, progressed)
-
-    case (Nil, Scope(One,  _,     after, afterProgressed) :: env, text)               =>
-      Leave +: score(after, text, env, afterProgressed)
-
-    case (Nil, Scope(Many, _,     after, afterProgressed) :: env, text) if !progressed =>
-      Leave +: score(after, text, env, afterProgressed)
-
-    case (Nil, Scope(Many, start, after, afterProgressed) :: env, text) if progressed  =>
-      score(start, text, Scope(Many, start, after, afterProgressed) :: env, false) or
-      (Leave +: score(after, text, env, afterProgressed))
+    def concat(builders: Seq[Builder]): Builder =
+      builders.flatten.toList
   }
 }
-
 

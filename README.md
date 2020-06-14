@@ -10,10 +10,9 @@ we actually have a useful main class.
 To do
 -----
 
-- Write a simple inefficient algorithm to a) check correctness of complex
-  iterative algorithm, and b) help experiment with more powerful parsers.
-  Should do this before the next TODO, as fixing stack space issues will
-  require algorith to look quite different to recursive implementation.
+- Use a logical representation of template rather than raw template. This will
+  make it easier to do other changes. Probably not realistic to do escaping
+  before this.
 - Fix out of stack memory issue, I have a bunch of notes about moving to a
   more predictable looping on Pattern's inner method.
 - Ye olde split between library and application.
@@ -21,9 +20,6 @@ To do
   make code more optimised and safer. Current approach is both overly
   simplistic but also more skeptical of creating new objects than standard
   Scala code.
-- Use a logical representation of template rather than raw template. This will
-  make it easier to do other changes. Probably not realistic to do escaping
-  before this.
 - Support escaping within template pattern.
 - A lot of hedgehog pattern gen logic might be easier to express with logical
   template representation.

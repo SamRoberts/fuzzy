@@ -3,6 +3,9 @@ package fuzzy
 import hedgehog._
 import hedgehog.runner._
 
+// TODO avoid constant need to disambiguate these classes, with a common interface or using different class names
+import fuzzy.impl.{Matcher => ImplMatcher}
+
 /** Simple pattern tests that check the exact match and score of simple pattern building blocks. */
 object PatternTest extends Properties {
 
@@ -24,10 +27,10 @@ object PatternTest extends Properties {
   def testSimplePatternImpl: Property =
     for {
       testPatt <- PatternGen.implPattern(Range.linear(0, 8)).forAll
-      realPatt  = Pattern(testPatt.toString) // TODO share pattern construction code, maybe a type class construction?
+      realPatt  = Matcher(testPatt.toString) // TODO share pattern construction code, maybe a type class construction?
       text     <- PatternGen.implPatternTestString(testPatt).forAll
-      testRes   = testPatt.score(text)
-      realRes   = realPatt.score(text)
+      testRes   = ImplMatcher.score(testPatt, text)
+      realRes   = realPatt.score(text) // TODO share pattern for calling API, maybe literally with a common interface
     } yield {
       realRes.score ==== testRes.score
       // an implementation can choose from any valid matched text with the lowest score,
@@ -35,7 +38,7 @@ object PatternTest extends Properties {
     }
 
   def testEmptyMatchArb: Property = {
-    val pattern = Pattern("")
+    val pattern = Matcher("")
 
     for {
       text  <- Gen.string(Gen.unicode, Range.linear(0, 100)).forAll
@@ -49,7 +52,7 @@ object PatternTest extends Properties {
   def testLiteralMatchEmpty: Property = {
     for {
       pattern <- PatternGen.literalString(Range.linear(0, 100)).forAll
-      result   = Pattern(pattern).score("")
+      result   = Matcher(pattern).score("")
     } yield {
       (result.score ==== pattern.length) and
       (result.matchedText ==== "")
@@ -59,7 +62,7 @@ object PatternTest extends Properties {
   def testLiteralMatchSame: Property = {
     for {
       pattern <- PatternGen.literalString(Range.linear(0, 100)).forAll
-      result   = Pattern(pattern).score(pattern)
+      result   = Matcher(pattern).score(pattern)
     } yield {
       (result.score ==== 0) and
       (result.matchedText ==== pattern)
@@ -80,7 +83,7 @@ object PatternTest extends Properties {
     for {
       patternAndText <- gen.forAll
       (pattern, text) = patternAndText
-      result          = Pattern(pattern).score(text)
+      result          = Matcher(pattern).score(text)
     } yield {
       val expectedMatch = text.zip(pattern).collect { case (tc,pc) if tc == pc => tc }.mkString
       (result.score ==== 2*(text.length - expectedMatch.length)) and
@@ -92,7 +95,7 @@ object PatternTest extends Properties {
     for {
       pattern <- PatternGen.literalString(Range.linear(0, 100)).forAll
       text    <- PatternGen.transformDel(pattern, 2, 1).forAll
-      result   = Pattern(pattern).score(text)
+      result   = Matcher(pattern).score(text)
     } yield {
       (result.score ==== (pattern.length - text.length)) and
       (result.matchedText ==== text)
@@ -109,7 +112,7 @@ object PatternTest extends Properties {
                    (_, _) => insertedString,
                    insertedString
                  ).forAll
-      result   = Pattern(pattern).score(text)
+      result   = Matcher(pattern).score(text)
     } yield {
       (result.score ==== (text.length - pattern.length)) and
       (result.matchedText ==== pattern)
@@ -117,7 +120,7 @@ object PatternTest extends Properties {
   }
 
   def testWildcardKleeneMatchArb: Property = {
-    val pattern = Pattern(".*")
+    val pattern = Matcher(".*")
 
     for {
       text  <- Gen.string(Gen.unicode, Range.linear(0, 100)).forAll
@@ -135,7 +138,7 @@ object PatternTest extends Properties {
       textMiddle <- Gen.string(Gen.unicode, Range.linear(0, 100)).forAll
       pattern     = prefix + ".*" + suffix
       text        = prefix + textMiddle + suffix
-      result      = Pattern(pattern).score(text)
+      result      = Matcher(pattern).score(text)
     } yield {
       (result.score ==== 0) and
       (result.matchedText ==== text)
@@ -146,7 +149,7 @@ object PatternTest extends Properties {
     for {
       literal <- PatternGen.literalChar.forAll
       text    <- Gen.string(Gen.frequency1(9 -> Gen.unicode, 1 -> Gen.constant(literal)), Range.linear(0, 100)).forAll
-      pattern  = Pattern(literal.toString + PatternGen.kleene)
+      pattern  = Matcher(literal.toString + PatternGen.kleene)
       result   = pattern.score(text)
     } yield {
       val matchLength = text.count(_ == literal)
@@ -159,7 +162,7 @@ object PatternTest extends Properties {
       literal <- PatternGen.literalString(Range.linear(0, 50)).forAll
       repeat  <- Gen.int(Range.linear(0, 5)).forAll
       text     = literal * repeat
-      result   = Pattern(s"($literal)*").score(text)
+      result   = Matcher(s"($literal)*").score(text)
     } yield {
       (result.score ==== 0) and
       (result.matchedText ==== text)
