@@ -10,12 +10,10 @@ we actually have a useful main class.
 To do
 -----
 
-- Use a logical representation of template rather than raw template. This will
-  make it easier to do other changes. Probably not realistic to do escaping
-  before this.
 - Fix out of stack memory issue, I have a bunch of notes about moving to a
   more predictable looping on Pattern's inner method.
-- Ye olde split between library and application.
+- Ye olde split between library and application. Standardize on API for
+  different implementations while I am at it.
 - Get benchmarks up and running and then start investigating whether we can
   make code more optimised and safer. Current approach is both overly
   simplistic but also more skeptical of creating new objects than standard

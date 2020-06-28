@@ -20,14 +20,17 @@ object Main {
 
   // TODO use decline for CLI
   // TODO use os-lib or see what cats has for file IO, and properly close file too
+  // TODO proper error handling
 
   def main(args: Array[String]): Unit = {
     val patternFile = args(0)
     val textFile    = args(1)
-    val pattern     = Source.fromFile(patternFile, "UTF-8").mkString
+    val patternText = Source.fromFile(patternFile, "UTF-8").mkString
+    val pattern     = Pattern.parse(patternText).right.get
+    val matcher     = Matcher(pattern)
     val text        = Source.fromFile(textFile, "UTF-8").mkString
 
-    println(Matcher(pattern).score(text).matchedText)
+    println(matcher.score(text).matchedText)
   }
 
 }

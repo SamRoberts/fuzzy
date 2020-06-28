@@ -39,32 +39,25 @@ object PatternUpperBoundTest extends Properties {
       property(". matches more than <a>", testWildcardMatchesMoreThanLiteral)
     )
 
-  def testArbKleeneMatchDiffRepeated: Property = {
-    val genBasePatternText = for {
-      (charGen, mapper) <- PatternGen.alphabetGenAndMapper(Range.linear(1, 30))
-      basePattern       <- Gen.string(charGen, Range.linear(1, 50))
-      baseText          <- PatternGen.transformMap(basePattern, 2, 1, mapper)
-    } yield (basePattern, baseText)
-
+  def testArbKleeneMatchDiffRepeated: Property =
     for {
-      bases          <- genBasePatternText.forAll
-      (pattern, text) = bases
-      repeat         <- Gen.int(Range.linear(0, 5)).forAll
-      result          = Matcher(s"($pattern)*").score(text * repeat)
+      literalMapper     <- StringGen.alphabetGenAndMapper(Range.linear(1, 50), Range.linear(1, 30)).forAll
+      (literal, mapper)  = literalMapper
+      baseText          <- StringGen.transformMap(literal, 2, 1, mapper).forAll
+      repeat            <- Gen.int(Range.linear(0, 5)).forAll
+      result             = Matcher(Pattern.kleene(Pattern.literal(literal))).score(baseText * repeat)
     } yield {
-      val matchScore = repeat * 2 * (text.zip(pattern).count { case (tc,pc) => tc != pc })
-      val skipScore  = repeat * text.length
+      val matchScore = repeat * 2 * (literal.zip(baseText) count { case (tc,pc) => tc != pc })
+      val skipScore  = repeat * baseText.length
       Result.diffNamed("=== score is worse than matching each repeat individually ===", result.score, matchScore)(_ <= _) and
       Result.diffNamed("=== score is worse than skipping entire text ===", result.score, skipScore)(_ <= _)
     }
-  }
 
   def testWildcardMatchesMoreThanLiteral: Property = {
-    // TODO generate any arbitrary complex pattern as long as we can pick out match characters to transform
     for {
-      pattern1 <- PatternGen.matchString(Range.linear(0, 100)).forAll
-      pattern2 <- PatternGen.transformMap(pattern1, 4, 1, _ => '.').forAll
-      text     <- PatternGen.transformChar(pattern1, 2, 1, _ => Gen.unicode).forAll
+      pattern1 <- PatternGen.pattern(Range.linear(0, 8)).forAll
+      pattern2 <- PatternGen.transformPattern(pattern1, 2, 1) { case Pattern.Lit(_) => Gen.constant(Pattern.any) }.forAll
+      text     <- StringGen.patternTestString(pattern1).forAll
       result1   = Matcher(pattern1).score(text)
       result2   = Matcher(pattern2).score(text)
     } yield {

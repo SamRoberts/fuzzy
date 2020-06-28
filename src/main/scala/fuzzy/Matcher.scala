@@ -14,164 +14,300 @@
 
 package fuzzy
 
-case class Matcher(pattern: String, trace: Boolean = false) {
+case class Matcher(pattern: Pattern, trace: Boolean = false) {
 
-  def withTrace: Matcher = copy(trace = true)
+  // TODO replace trace with proper log support
 
-  val flow = ControlFlow(pattern)
+  import Matcher._
+
+  // arrays are indexed by pix
+  // given pattern "a.b(cde*)*fg.*" as an example, we create arrays with elements as follows,
+  // with ., {*, *}, END representing wildcard, start and end of kleene group, and end of pattern, respectively.
+  // [ a, ., b, {*, c, d, {*, e, *}, *}, f, g, {*, ., *}, END ]
+  //
+  // tables are indexed by pix and tix
+  // given text the pattern above and text "azbcdeeecdfgz" as an example,
+  // we create a table to hold a cell for every item in the cross-product of the pattern array above,
+  // plus the text array [ a, z, b, c, d, e, e, e, c, d, f, g, z, END ]
+
+  // this is probably the minimal set of arrays
+  // might also want to create tables pre-computing skip penalties, or maybe cumulative skip penalty in kleene groups
+  // but for now we'll just compute these arrays and see how it goes
+
+  val cases    = patternArray[Int] (ANY,  _ => LIT,       _ => OPEN,    _ => CLOSE,   END).toArray
+  val literals = patternArray[Char]('?',  identity[Char], _ => '?',     _ => '?',     '?').toArray
+  val backs    = patternArray[Int] (-1,   _ => -1,        _ => -1,      _.length + 1, -1).toArray
+  val skips    = patternArray[Int] (-1,   _ => -1,        _.length + 2, _ => -1,      -1).toArray
+
+  val maxKleeneDepth = pattern.fold[Int](0, _ => 0, identity[Int], _ + 1, xs => if (xs.isEmpty) 0 else xs.max)
 
   def score(text: String): Match = {
-    var stepCount = 0
 
-    // if tableFin(i,j) then tableVal(i,j) is final score from that state to end
-    // tableAcc(i,j) is minimum accumulated penalty incurred from start to state
-    // tableRec(i,j) records the next state the optimal path took
-    val tableVal = Table[Int](text, pattern, -1)
-    val tableAcc = Table[Int](text, pattern, -1)
-    val tableRec = Table[Int](text, pattern, -1)
+    // scores(tix)(pix) holds smallest penalty hit to match remaining text and pattern, starting at this index of each
+    // pnexts(tix)(pix) holds pix for tix+1 position which corresponds to one of the optimal paths
+    // matchs(tix)(pix) holds boolean flag telling us whether path to next text level involved matching text or not
+    //
+    // control flow state: indices into pattern and text. start at end and work our way back
+    //                     also variables for storing best next step
+    //
+    // temp state: temporary variables for storing the best attempted path from a particular state
+    //
+    // scoreBack state: keeps track of scores at different levels when traversing nested kleene groups
 
-    // TODO we must remove non tail recursive call to process large texts ... but how?
-    //
-    // it might actually be easiest to go straight to flood fill algorithm, as it makes
-    // path through state straightforward ... but need to work out the details.
-    //
-    // so the flood fill algorithm works backwards from end of text. It says, for each
-    // character in text, if you are at this stage in text then compute the score to
-    // match the rest of the text for all stages in pattern.
-    //
-    // at end of text it can be pre-computed for each pattern.
-    //
-    // first attempt:
-    //
-    // if stage n is computed, then stage n-1 is:
-    //   for each pattern stage,
-    //     for each state transition which involves eating a text character, look at the penalty plus score in stage n
-    //     for each state transition which does NOT involve eating a text character, look at penalty plus incorporate transititions from next pattern state
-    //     now, there is no point in eating an entire kleene loop without consuming text, so this second transition category just boils down to gathering up more (penality, stage n index) comboss
-    //     However, we can walk arbitrary distances forward in pattern, accumulating penalties as we go, so the number of possible transitions is proportional to the size of pattern
-    //
-    // second attempt:
-    //
-    //
-    // if stage n is computed, then stage n-1 is:
-    //   for each pattern stage,
-    //     for each state transition which involves eating a text character, look at the penalty plus score in stage n
-    //     for each state transition which does NOT involve eating a text character,
-    //       do inner walk across pattern only state transitions, avoiding loops and caching results similar to 2 dimensional walk in inner at the moment but simpler as only 1 dimension
-    //       simple approach: use stack for pattern only transitions!
-    //       does simple approach work inside loops if starting point could have been any one of the characters?
-    //       is there a different approach that orders pattern such that we can calculate in single back to front sweep?
-    def inner(parentStep: Int, textIx: Int, patternIx: Int, acc: Int): Int = {
-      stepCount += 1
-      val step = stepCount
+    val scores = Array.ofDim[Int](text.length + 1, cases.length)
+    val pnexts = Array.ofDim[Int](text.length + 1, cases.length)
+    val matchs = Array.ofDim[Boolean](text.length + 1, cases.length)
 
-      printTraceMsg("enter", step, "from", parentStep, text, textIx, pattern, patternIx)
+    var pix = cases.length - 1
+    var tix = text.length
 
-      def set(score: Int) = score >= 0
-      def patternFinished = patternIx >= pattern.length
-      def textFinished    = textIx >= text.length
-      def canFork         = set(forkIx)
-      def forkIx          = flow.forks(patternIx)
-      def mustGoto        = set(gotoIx)
-      def gotoIx          = flow.gotos(patternIx)
-      def nextIx          = patternIx+1
-      def nextText        = textIx+1
-      def patternControl  = { val c = pattern(patternIx); c == '*' || c == '(' || c == ')' }
-      def isMatch         = { val c = pattern(patternIx); c == '.' || c == text(textIx) }
+    var tempScore = Int.MaxValue
+    var tempPNext = -1
+    var tempMatch = false
 
+    val scoreBack = Array.fill(maxKleeneDepth + 1)(0)
 
-      if (set(tableVal(textIx, patternIx))) {
-        val result = tableVal(textIx, patternIx)
-        printTraceMsg("leave", step, "for", parentStep, text, textIx, pattern, patternIx, "cache", result)
-        return result
-      }
+    def logState(): Unit = {
+      def showi(i: Int): String  = if (i == -1) " " else i.toString
+      def showc(c: Char): String = c.toString
 
-      if (set(tableAcc(textIx, patternIx)) && tableAcc(textIx, patternIx) <= acc) {
-        // if we've already reached this state and our accumulated score isn't any better, we might as well give up now
-        printTraceMsg("leave", step, "for", parentStep, text, textIx, pattern, patternIx, "throw", -1)
-        return -1
+      println("==== state ====")
+      println("")
+      print("cases:    ")
+      println(cases.map(showi).mkString(", "))
+      print("literals: ")
+      println(literals.map(showc).mkString(", "))
+      print("backs:    ")
+      println(backs.map(showi).mkString(", "))
+      print("skips:    ")
+      println(skips.map(showi).mkString(", "))
+      println("")
+      println("scores:")
+      println(scores.map(_.map(showi).mkString(", ")).mkString("\n"))
+      println("")
+      println("pnexts:")
+      println(pnexts.map(_.map(showi).mkString(", ")).mkString("\n"))
+      println("")
+    }
+
+    // attempt and attemptApply use temp variables and pix and tix to try different paths from current state
+
+    def attemptSkipText(): Unit = {
+      if (trace) print(s"  atttempt to skip text: ")
+      attemptGen(scores(tix + 1)(pix) + 1, pix, false)
+    }
+
+    def attemptMatch(): Unit = {
+      if (trace) print(s"  atttempt to match text: ")
+      attemptGen(scores(tix + 1)(pix + 1), pix + 1, true)
+    }
+
+    def attemptJumpForward(pixDiff: Int, skipPenalty: Int): Unit = {
+      if (trace) print(s"  atttempt jump forward $pixDiff with penalty $skipPenalty and do optimal step from there: ")
+      attemptGen(
+        scores(tix)(pix + pixDiff) + skipPenalty,
+        pnexts(tix)(pix + pixDiff),
+        matchs(tix)(pix + pixDiff)
+      )
+    }
+
+    def attemptJumpBackSkipText(pixDiff: Int, skipPenalty: Int): Unit = {
+      if (trace) print(s"  atttempt jump back $pixDiff with penalty $skipPenalty and skip text: ")
+      attemptGen(
+        scores(tix + 1)(pix - pixDiff) + skipPenalty + 1,
+        pix - pixDiff,
+        false
+      )
+    }
+
+    def attemptJumpBackMatchText(pixDiff: Int, skipPenalty: Int): Unit = {
+      if (trace) print(s"  atttempt jump back $pixDiff with penalty $skipPenalty and match text: ")
+      attemptGen(
+        scores(tix + 1)(pix - pixDiff + 1) + skipPenalty,
+        pix - pixDiff + 1,
+        true
+      )
+    }
+
+    def attemptGen(newScore: Int, newPNext: Int, newMatch: Boolean): Unit =
+      if (newScore < tempScore) {
+        if (trace) println(s"OK, new score: $newScore, new pnext: $newPNext, new match: $newMatch")
+        tempScore = newScore
+        tempPNext = newPNext
+        tempMatch = newMatch
       } else {
-        tableAcc(textIx, patternIx) = acc
+        if (trace) println(s"NO, new score $newScore not good enough")
       }
 
-      // ok, my attempt to not allocate heap in middle of loop is reaching epically stupid proportions ...
-      var result        = -1
-      var resTextIx     = -1
-      var resTemplateIx = -1
-
-      def attempt(newTextIx: Int, newTemplateIx: Int, penalty: Int): Unit = {
-        val rawScore = inner(step, newTextIx, newTemplateIx, acc+penalty)
-        val score    = if (set(rawScore)) rawScore+penalty else rawScore
-
-        if (set(score) && (!set(result) || score < result)) {
-          result        = score
-          resTextIx     = newTextIx
-          resTemplateIx = newTemplateIx
-        }
-      }
-
-      if (patternFinished && textFinished) {
-        result = 0
-      }
-      else if (patternFinished && !textFinished) {
-        attempt(nextText, patternIx, 1)
-      }
-      else if (mustGoto) {
-        attempt(textIx, gotoIx, 0)
-      }
-      else {
-        if (canFork) {
-           attempt(textIx, forkIx, 0)
-        }
-
-        if (patternControl) {
-          attempt(textIx, nextIx, 0)
-        }
-        else if (textFinished) {
-          attempt(textIx, nextIx, 1)
-        }
-        else if (isMatch) {
-          attempt(nextText, nextIx, 0)
-        }
-        else {
-          attempt(textIx, nextIx, 1)
-          attempt(nextText, patternIx, 1)
-        }
-      }
-
-      if (set(result)) {
-        tableVal(textIx, patternIx) = result
-      }
-      if (set(resTextIx) && set(resTemplateIx)) {
-        tableRec(textIx, patternIx) = tableRec.tableIx(resTextIx, resTemplateIx)
-      }
-
-      printTraceMsg("leave", step, "for", parentStep, text, textIx, pattern, patternIx, "score", result)
-
-      result
+    def applyAttempt(): Unit = {
+      if (trace) println("")
+      scores(tix)(pix) = tempScore
+      pnexts(tix)(pix) = tempPNext
+      matchs(tix)(pix) = tempMatch
+      tempScore        = Int.MaxValue
+      tempPNext        = -1
     }
 
-    val score = inner(0, 0, 0, 0)
+    // first, populate last row with scores for skipping remaining pattern once we get to end of string
+    // remember we can skip any kleene expressions we encounter
 
-    Match(text, this, score, tableRec)
+    while (pix >= 0) {
+      if (trace) println(s"processing text ix: $tix, pattern ix: $pix")
+      cases(pix) match {
+        case END =>
+          tempScore = 0
+          tempPNext = -1
+          tempMatch = false
+
+        case ANY | LIT =>
+          attemptJumpForward(1, 1)
+
+        case CLOSE =>
+          attemptJumpForward(1, 0)
+
+        case OPEN =>
+          attemptJumpForward(skips(pix), 0)
+      }
+
+      applyAttempt()
+      pix -= 1
+    }
+
+    if (trace) logState()
+
+    tix -= 1
+
+    // now, go back through text 1 character at a time, filling out scores and pnexts as we go
+
+    while (tix >= 0) {
+      pix = cases.length - 1
+
+      while (pix >= 0) {
+        if (trace) println(s"processing text ix: $tix, pattern ix: $pix")
+
+        cases(pix) match {
+          case END =>
+            attemptSkipText()
+
+          case ANY =>
+            attemptMatch()
+            attemptSkipText()
+            attemptJumpForward(1, 1)
+
+          case LIT if literals(pix) == text(tix) =>
+            attemptMatch()
+            attemptJumpForward(1, 1)
+            attemptSkipText()
+
+          case LIT /*literal does not match*/ =>
+            attemptJumpForward(1, 1)
+            attemptSkipText()
+
+          case OPEN =>
+            attemptJumpForward(skips(pix), 0)
+            attemptJumpForward(1, 0)
+            attemptSkipText()
+
+          case CLOSE =>
+            // this is where the bulk of the kleene magic happens
+            // we're going to check cost of skipping close token
+            // and then we are going to check cost of skipping back to open ...
+            // but wait! we haven't calculated that cost yet as it's in front of us in row!
+            // so for CLOSE only we will check each possible skip from open to current pix
+            // remembering that when we get back out of an inner kleene we can imagine we skipped entire thing
+
+            attemptSkipText()
+            attemptJumpForward(1, 0)
+
+            var pixBack      = backs(pix)
+            var scoreBackIdx = 0
+
+            while (pixBack > 0) {
+              cases(pix-pixBack) match {
+                case END =>
+                  throw new IllegalStateException(s"programmer error: encountered unexpected END symbol in '$this' case array")
+
+                case ANY =>
+                  attemptJumpBackMatchText(pixBack, scoreBack(scoreBackIdx))
+                  attemptJumpBackSkipText(pixBack, scoreBack(scoreBackIdx))
+                  scoreBack(scoreBackIdx) += 1
+
+                case LIT if literals(pix-pixBack) == text(tix) =>
+                  attemptJumpBackMatchText(pixBack, scoreBack(scoreBackIdx))
+                  attemptJumpBackSkipText(pixBack, scoreBack(scoreBackIdx))
+                  scoreBack(scoreBackIdx) += 1
+
+                case LIT /*literal does not match*/ =>
+                  attemptJumpBackSkipText(pixBack, scoreBack(scoreBackIdx))
+                  scoreBack(scoreBackIdx) += 1
+
+                case OPEN =>
+                  attemptJumpBackSkipText(pixBack, scoreBack(scoreBackIdx))
+                  scoreBack(scoreBackIdx+1) = scoreBack(scoreBackIdx)
+                  scoreBackIdx += 1
+
+                case CLOSE =>
+                  attemptJumpBackSkipText(pixBack, scoreBack(scoreBackIdx))
+                  scoreBackIdx -= 1
+              }
+
+              pixBack  -= 1
+            }
+        }
+
+        applyAttempt()
+        pix -= 1
+      }
+
+      if (trace) logState()
+
+      tix -= 1
+    }
+
+    // at this point, we should have filled out scores, pnexts, and matchs
+    // optimal score for entire match is stored at scores(0)(0)
+    // we are now traversing pnexts and matchs, building up matched text
+
+    tix = 0
+    pix = 0
+    val matchedTextBuilder = new StringBuilder(text.length)
+
+    while (tix < text.length) {
+      if (matchs(tix)(pix)) { matchedTextBuilder += text(tix) }
+      pix = pnexts(tix)(pix)
+      tix += 1
+    }
+
+    MatchedMatch(matchedTextBuilder.toString, scores(0)(0))
   }
 
-  def printTraceMsg(action: String, step: Int, connector: String, lastStep: Int, text: String, textIx: Int, pattern: String, patternIx: Int): Unit  = {
-    if (trace) {
-      val splitText    = Util.indexed(text, textIx)
-      val splitPattern = Util.indexed(pattern, patternIx)
-      print(Color.std)
-      println(f"$action $step%3d $connector%4s $lastStep%3d: position: $splitText%12s pattern: $splitPattern%8s")
-    }
-  }
+  def patternArray[T](
+    anyT: T,
+    litT: Char => T,
+    openT: Seq[T] => T,
+    closeT: Seq[T] => T,
+    end: T
+  ): Seq[T] = {
+    val folded = pattern.fold[Seq[T]](
+      Seq(anyT),
+      c => Seq(litT(c)),
+      identity[Seq[T]],
+      innerTs => openT(innerTs) +: innerTs :+ closeT(innerTs),
+      _.flatten
+    )
 
-  def printTraceMsg(action: String, step: Int, connector: String, lastStep: Int, text: String, textIx: Int, pattern: String, patternIx: Int, scoreType: String, score: Int): Unit  = {
-    if (trace) {
-      val splitText    = Util.indexed(text, textIx)
-      val splitPattern = Util.indexed(pattern, patternIx)
-      print(Color.leaveText)
-      println(f"$action $step%3d $connector%4s $lastStep%3d: position: $splitText%12s pattern: $splitPattern%8s, $scoreType $score%2d")
-    }
+    folded :+ end
   }
 }
 
+object Matcher {
+  // enum for types of pattern element
+  val ANY = 1
+  val LIT = 2
+  val OPEN = 3
+  val CLOSE = 4
+  val END = 5
+}
+
+
+case class MatchedMatch(matchedText: String, score: Int) extends Match

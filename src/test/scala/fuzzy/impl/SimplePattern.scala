@@ -14,43 +14,155 @@
 
 package fuzzy.impl
 
-import fuzzy.PatternFactory
+import fuzzy.Pattern
+
+case class Result[A](steps: List[Step], rest: List[Char], value: A)
+
+case class Matcher[A](gather: (Pattern, List[Char]) => List[Result[A]]) {
+  def map[B](f: A => B): Matcher[B] =
+    flatMap(a => Matcher.pure(f(a)))
+
+  def flatMap[B](f: A => Matcher[B]): Matcher[B] =
+    Matcher(
+      (pattern, text) =>
+        for {
+          resA <- gather(pattern, text)
+          resB <- f(resA.value).gather(pattern, resA.rest)
+        } yield Result(resB.steps ++ resA.steps, resB.rest, resB.value)
+    )
+
+  def filter(f: A => Boolean): Matcher[A] =
+    Matcher(
+      (pattern, text) =>
+        gather(pattern, text).filter(resA => f(resA.value))
+    )
+
+  def withFilter(f: A => Boolean): Matcher[A] =
+    filter(f)
+
+  def ++(other: Matcher[A]): Matcher[A] =
+    Matcher(
+      (pattern, text) =>
+        gather(pattern, text) ++ other.gather(pattern, text)
+    )
+}
 
 object Matcher {
 
-  import Element._
-  import Arity._
+  import Pattern._
   import Step._
 
+  // TODO my absurdly inefficient test matcher implementation makes it unrealistic to do this test on reasonable sized inputs
+  //      improve effiency if test matcher implementation
+
   def score(pattern: Pattern, text: String): Match =
-    score(pattern.elements, text.toList, Nil, false)
+    parsePatternToEnd
+      .gather(pattern, text.toList)
+      .map(res => Match(res.steps))
+      .minBy(_.score)
 
-  def score(pattern: List[Element], text: List[Char], env: List[Scope], progressed: Boolean): Match = (pattern, env, text) match {
-    case (Nil,            Nil,       Nil)           => Match(Nil)
-    case (Nil,            Nil, t :: rest)           => SkipText(t)  +: score(Nil, rest, env, progressed)
+  def parsePatternToEnd: Matcher[Unit] =
+    for {
+      _    <- parsePattern
+      left <- peekRemainingText
+      _    <- traverse_(left)(c => record(SkipText(c)))
+    } yield ()
 
-    case (Lit(p) :: next, env, Nil      )           => SkipLit(p)   +: score(next, Nil, env, progressed)
-    case (Lit(p) :: next, env, t :: rest) if p == t => MatchChar(p) +: score(next, rest, env, true)
-    case (Lit(p) :: next, env, t :: rest) if p != t => (SkipLit(p)  +: score(next, t :: rest, env, progressed)) or
-                                                       (SkipText(t) +: score(Lit(p) :: next, rest, env, true))
+  def parsePattern: Matcher[Unit] =
+    parseConcat ++
+    parseKleene ++
+    parseGroup ++
+    matchAny ++
+    matchLit ++
+    skipAny ++
+    skipLit ++
+    skipText.flatMap(_ => parsePattern)
 
-    case (Any :: next,    env, Nil      )           => SkipAny +: score(next, Nil, env, progressed)
-    case (Any :: next,    env, t :: rest)           => MatchChar(t) +: score(next, rest, env, true)
+  def parseConcat: Matcher[Unit] =
+    for {
+      ps <- whenPatternIs { case Concat(ps) => ps }
+      _  <- traverse_(ps) { p => withPattern(p, parsePattern) }
+    } yield ()
 
-    case (Push(One,  start) :: after, env, text)    => Enter +: score(start, text, Scope(One,  start, after, progressed) :: env, false)
-    case (Push(Many, start) :: after, env, text)    => (Enter +: score(start, text, Scope(Many, start, after, progressed) :: env, false)) or
-                                                       score(after, text, env, progressed)
+  def parseKleene: Matcher[Unit] =
+    for {
+      inner <- whenPatternIs { case Kleene(p) => p }
+      _     <- withPattern(inner, parsePatternMany)
+    } yield ()
+ 
+ def parsePatternMany: Matcher[Unit] =
+    pure(()) ++ (for {
+      before <- peekRemainingText 
+      _      <- parsePattern
+      after  <- peekRemainingText
+      if (before != after)
+      _      <- parsePatternMany
+    } yield ())
 
-    case (Nil, Scope(One,  _,     after, afterProgressed) :: env, text)               =>
-      Leave +: score(after, text, env, afterProgressed)
+  def parseGroup: Matcher[Unit] =
+    for {
+      p <- whenPatternIs { case Group(p) => p }
+      _ <- record(Enter)
+      _ <- withPattern(p, parsePattern)
+      _ <- record(Leave)
+    } yield ()
 
-    case (Nil, Scope(Many, _,     after, afterProgressed) :: env, text) if !progressed =>
-      Leave +: score(after, text, env, afterProgressed)
+  def matchAny: Matcher[Unit] =
+    for {
+      _ <- whenPatternIs { case Any => () }
+      c <- readText
+      _ <- record(MatchChar(c))
+    } yield ()
 
-    case (Nil, Scope(Many, start, after, afterProgressed) :: env, text) if progressed  =>
-      score(start, text, Scope(Many, start, after, afterProgressed) :: env, false) or
-      (Leave +: score(after, text, env, afterProgressed))
-  }
+  def matchLit: Matcher[Unit] =
+    for {
+      p <- whenPatternIs { case Lit(p) => p }
+      c <- readText
+      if (c == p)
+      _ <- record(MatchChar(c))
+    } yield ()
+
+  def skipAny = skipMatcher { case Any => SkipAny }
+  def skipLit = skipMatcher { case Lit(p) => SkipLit(p) }
+
+  def skipText = readText.flatMap(c => record(SkipText(c)))
+
+  def skipMatcher(skip: PartialFunction[Pattern, Step]): Matcher[Unit] =
+    whenPatternIs(skip).flatMap(record)
+
+  def peekRemainingText: Matcher[List[Char]] =
+    Matcher((_, text) => List(Result(Nil, text, text)))
+
+  def readText: Matcher[Char] =
+    Matcher(
+      (pattern, text) => text match {
+        case char :: rest => List(Result(Nil, rest, char))
+        case Nil          => Nil
+      }
+    )
+
+  def withPattern[A](p: Pattern, matcher: Matcher[A]): Matcher[A] =
+    Matcher((_, text) => matcher.gather(p, text))
+
+  def whenPatternIs[P](f: PartialFunction[Pattern, P]): Matcher[P] =
+    Matcher {
+      (pattern, text) =>
+        if (f.isDefinedAt(pattern)) List(Result(Nil, text, f(pattern)))
+        else                        Nil
+    }
+
+  def record(step: Step): Matcher[Unit] =
+    Matcher((pattern, text) => List(Result(List(step), text, ())))
+
+  // TODO as with many of these methods, can be replaced with standard cats functionality prtty easily
+  def traverse_[A](values: Seq[A])(f: A => Matcher[Unit]): Matcher[Unit] =
+    values match {
+      case Nil          => pure(())
+      case head +: tail => f(head).flatMap(_ => traverse_(tail)(f))
+    }
+
+  def pure[A](value: A): Matcher[A] =
+    Matcher((_, text) => List(Result(Nil, text, value)))
 }
 
 case class Match(steps: List[Step]) {
@@ -70,10 +182,6 @@ case class Match(steps: List[Step]) {
   // TODO share match API with real implementation
   def matchedText: String =
     steps.collect { case MatchChar(c) => c }.mkString
-
-  def or(other: Match) = if (score <= other.score) this else other
-
-  def +:(step: Step): Match = Match(step +: steps)
 }
 
 sealed trait Step
@@ -85,69 +193,5 @@ object Step {
   case object SkipAny extends Step
   case object Enter extends Step
   case object Leave extends Step
-}
-
-case class Scope(arity: Arity, start: List[Element], after: List[Element], afterProgressed: Boolean)
-
-sealed trait Arity
-
-object Arity {
-  case object One extends Arity
-  case object Many extends Arity
-}
-
-sealed trait Element
-
-object Element {
-  case class Lit(char: Char) extends Element
-  case object Any extends Element
-  case class Push(arity: Arity, start: List[Element]) extends Element
-}
-
-case class Pattern(elements: List[Element]) {
-  import Arity._
-  import Element._
-
-  override def toString: String =
-    elements.map {
-      case Lit(c) => c.toString
-      case Any    => "."
-      case Push(a, es) =>
-        val inner = Pattern(es).toString
-
-        if (inner.size == 1 && a == Many) s"${inner}*"
-        else if (a == Many)               s"(${inner})*"
-        else                              s"(${inner})"
-    }.mkString
-}
-
-object Pattern {
-
-  import Element._
-  import Arity._
-  import Step._
-
-  implicit val factory = new PatternFactory[Pattern] {
-    type Builder = List[Element]
-    def freeze(builder: Builder): Pattern = Pattern(builder)
-
-    def any(text: String): Builder =
-      List(Any)
-
-    def lit(char: Char, text: String): Builder =
-      List(Lit(char))
-
-    def group(inside: Builder, textPre: String, textPost: String): Builder =
-      List(Push(One, inside))
-
-    def kleene(inside: Builder, testPre: String, textPost: String): Builder =
-      inside match {
-        case List(Push(One, inner)) => List(Push(Many, inner))
-        case _                      => List(Push(Many, inside))
-      }
-
-    def concat(builders: Seq[Builder]): Builder =
-      builders.flatten.toList
-  }
 }
 
