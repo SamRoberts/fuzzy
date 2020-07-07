@@ -23,20 +23,17 @@ To do
 - Support escaping within template pattern.
 - A lot of hedgehog pattern gen logic might be easier to express with logical
   template representation.
-- Replace unstructured fork and jump instructions into scope instructions. To
-  avoid object allocations (but will have benchmarks to judge if I really
-  care), can parse template ahead of time to find out max env depth and
-  pre-allocate env arrays.
 - Once scope instructions are done, consider additional outputs, like printing
   text which matched scope, similar to regex captures. Consider named scopes.
-- Prove tableRec is valid and there are no loops. If so, try to get rid of
-  stack usage completely, replacing it with a loop that fills out mutable
-  tables
 - Can we support generic monadic parsing rather than just regex inspired
   pattern?  will require both effiency and a more dynamic replacement for
   tables
 - Support for pluggable visualisation mechanisms, possibly only on inefficient
-  algorithm, and possibly remove trace from supposedly efficient loop
   algorithm.
-- Table evolution over time visualisation.
+- Think about parallelisation. If we had no kleene stars, we could potentially
+  process all elements in pattern in parallel, as long as we process from
+  (end,end) to (start,start) in a "diagonaal-breadth-first" pattern. This would
+  require elements on the diagonal to be computed in lock-step and elements at
+  step N to be available to computations at step N+1. Not sure how badly the
+  precence of kleene stars in pattern interferes with this?
 
