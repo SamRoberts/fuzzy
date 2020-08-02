@@ -10,17 +10,13 @@ we actually have a useful main class.
 To do
 -----
 
-- Fix out of stack memory issue, I have a bunch of notes about moving to a
-  more predictable looping on Pattern's inner method.
 - Ye olde split between library and application. Standardize on API for
   different implementations while I am at it.
+- Improve efficiency of test implementation so we can write larger tests with it.
 - Get benchmarks up and running and then start investigating whether we can
   make code more optimised and safer. Current approach is both overly
   simplistic but also more skeptical of creating new objects than standard
   Scala code.
-- Support escaping within template pattern.
-- A lot of hedgehog pattern gen logic might be easier to express with logical
-  template representation.
 - Once scope instructions are done, consider additional outputs, like printing
   text which matched scope, similar to regex captures. Consider named scopes.
 - Can we support generic monadic parsing rather than just regex inspired
