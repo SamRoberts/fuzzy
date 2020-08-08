@@ -28,9 +28,8 @@ happened.
 To do
 -----
 
-- Ye olde split between library and application. Standardize on API for
-  different implementations while I am at it.
-- Produce proper CLI program.
+- Improve match class so we get useful information about what parts of text
+  were skipped, where the group matches are, etc.
 - Use on real-world examples and figure out how to make practically useful.
 - Improve efficiency of test implementation so we can write larger tests with it.
 - Get benchmarks up and running and then start investigating whether we can
