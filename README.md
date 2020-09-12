@@ -26,11 +26,14 @@ appears useful.
 To do
 -----
 
+- Improve practical use of tool based on real world experience:
+  - Extend pattern to enable us to give moer restricted forms of "variable text"
+  - Create a more powerful xml based pattern language to enable named matches and other non-regex tools
+    Regex pattern would then desugar to this more powerful representation
+  - Create a more powerful default output corresponding to xml pattern with inserted and skipped markup
+  - Create a cli mode which reads the xml output and produces specific parts of the output (e.g. matched text, specific groups, etc)
 - Improve efficiency of simple implementation so existing test suite doesn't
   randomly take forever if we generate larger text/pattern than normal.
-- Improve match class so we get useful information about what parts of text
-  were skipped, where the group matches are, etc.
-- Use on real-world examples and figure out how to make practically useful.
 - Get benchmarks up and running and then start investigating whether we can
   make code more optimised and safer. Current approach is both overly
   simplistic but also more skeptical of creating new objects than standard
