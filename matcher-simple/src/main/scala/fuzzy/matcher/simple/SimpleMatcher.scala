@@ -17,7 +17,7 @@ package fuzzy.matcher.simple
 import cats.{Alternative, Eval, Functor, Monad, Monoid}
 import cats.data.{IndexedStateT, Nested, ReaderT, StateT, Writer}
 import cats.mtl.{Ask, Stateful, Tell}
-import cats.syntax.all._
+import cats.implicits._
 
 import fs2.Stream
 
@@ -74,60 +74,74 @@ object Parser {
   type MemoParser[A] = ReaderT[BestParser, Caches, A]
 
   type AskCaches[F[_]]  = Ask[F, Caches]
-  type ParsesText[F[_]] = Stateful[F, List[Char]]
-  type TellStep[F[_]]   = Tell[F, Steps]
+  type StatefulText[F[_]] = Stateful[F, List[Char]]
+  type TellSteps[F[_]]   = Tell[F, Steps]
 
-  // TODO scala can't find map as both Monad and ALternative provide "separate" functor instances
-  //      so we can't use for comprehensions
-  //      we might be able to go back to using for comprehensions after upgrading scala?
-  //      ugh, "progressive" is particularly ugly!
+  implicit def canParse[F[_]](
+    implicit S: StatefulText[F],
+             T: TellSteps[F],
+             M: Monad[F],
+             A: Alternative[F]
+  ): CanParse[F] = StateTellCanParse()(S, T, M, A)
 
-  def parseGroup[F[_]: TellStep : Monad, A](parseInner: F[A]): F[A] =
+  def parseConcat[F[_]: CanParse](parseInners: List[F[Unit]]): F[Unit] = {
+    // bizarrely, this code causes the guard calls to stop compiling?!?
+    parseInners.sequence_
+  }
+
+  def parseGroup[F[_]: CanParse, A](parseInner: F[A]): F[A] =
     record[F](Steps.enter) *> parseInner <* record(Steps.leave)
 
-  def parseKleene[F[_]: ParsesText: Alternative](parseInner: F[Unit])(implicit F: Monad[F]): F[Unit] =
+  def parseKleene[F[_]: CanParse](parseInner: F[Unit]): F[Unit] =
     allRepetitionsOf(progressive(parseInner))
 
-  def progressive[F[_]: ParsesText: Alternative, A](parseInner: F[A])(implicit F: Monad[F]): F[A] =
-    peekRemainingText[F]    flatMap(before =>
-    parseInner              flatMap(res =>
-    peekRemainingText       flatMap(after =>
-    (before != after).guard flatMap(_ =>
-    F.pure(res)))))
+  def progressive[F[_]: CanParse, A](parseInner: F[A]): F[A] =
+    for {
+      before <- peekText[F]
+      res    <- parseInner
+      after  <- peekText
+      _      <- (before != after).guard
+    } yield res
 
-  def allRepetitionsOf[F[_]: Alternative](parseInner: F[Unit])(implicit F: Monad[F]): F[Unit] =
+  def allRepetitionsOf[F[_]](parseInner: F[Unit])(implicit F: CanParse[F]): F[Unit] =
     F.pure(()) <+> (parseInner >> allRepetitionsOf(parseInner))
  
-  def matchLit[F[_]: ParsesText: TellStep: Monad: Alternative](l: Char): F[Unit] =
-    readText[F]
-      .flatMap(c => (c == l).guard)
-      .flatMap(_ => record(Steps.matchChar(l)))
+  def matchLit[F[_]: CanParse](l: Char): F[Unit] =
+    for {
+      c <- popChar[F]
+      _ <- (c == l).guard
+      _ <- record(Steps.matchChar(l))
+    } yield ()
 
-  def matchAny[F[_]: ParsesText: TellStep: Monad: Alternative]: F[Unit] =
-    readText[F]
-      .flatMap(c => record(Steps.matchChar(c)))
+  def matchAny[F[_]: CanParse]: F[Unit] =
+    for {
+      c <- popChar[F]
+      _ <- record(Steps.matchChar(c))
+    } yield ()
 
-  def skipText[F[_]: ParsesText: TellStep: Monad: Alternative]: F[Unit] =
-    readText[F]
-      .flatMap(c => record[F](Steps.skipText(c)))
+  def skipText[F[_]: CanParse]: F[Unit] =
+    for {
+      c <- popChar[F]
+      _ <- record(Steps.skipText(c))
+    } yield ()
 
-  def skipAny[F[_]: TellStep]: F[Unit] =
-    record[F](Steps.skipAny)
+  def skipAny[F[_]: CanParse]: F[Unit] =
+    record(Steps.skipAny)
 
-  def skipLit[F[_]: TellStep](l: Char): F[Unit] =
-    record[F](Steps.skipLit(l))
+  def skipLit[F[_]: CanParse](l: Char): F[Unit] =
+    record(Steps.skipLit(l))
 
-  def peekRemainingText[F[_]](implicit F: ParsesText[F]): F[List[Char]] =
-    F.get
+  def popChar[F[_]](implicit F: CanParse[F]): F[Char] =
+    F.popChar
 
-  def readText[F[_]: Monad](implicit A: Alternative[F], P: ParsesText[F]): F[Char] =
-    P.get.flatMap {
-      case char :: rest => P.set(rest) >> A.pure(char)
-      case Nil          => A.empty[Char]
-    }
+  def peekText[F[_]](implicit F: CanParse[F]): F[List[Char]] =
+    F.peekText
 
-  def record[F[_]](step: Steps)(implicit F: TellStep[F]): F[Unit] =
-    F.tell(step)
+  def record[F[_]](steps: Steps)(implicit F: CanParse[F]): F[Unit] =
+    F.record(steps)
+
+  def pure[F[_], A](a: A)(implicit F: CanParse[F]): F[A] =
+    F.pure(a)
 
   // WARNING: the id String is a hack to do equality on functions.
   //
@@ -168,6 +182,33 @@ object Parser {
   }
 }
 
+trait CanParse[F[_]] extends Monad[F] with Alternative[F] {
+  def record(steps: Steps): F[Unit]
+  def peekText: F[List[Char]]
+  def popChar: F[Char]
+}
+
+case class StateTellCanParse[F[_]](implicit S: Parser.StatefulText[F], T: Parser.TellSteps[F], M: Monad[F], A: Alternative[F]) extends CanParse[F] {
+
+  def record(steps: Steps): F[Unit] =
+    T.tell(steps)
+
+  def peekText: F[List[Char]] =
+    S.get
+
+  def popChar: F[Char] =
+    S.get.flatMap {
+      case char :: rest => S.set(rest) >> M.pure(char)
+      case Nil          => A.empty[Char]
+    }
+
+   def pure[A](x: A): F[A]                                = M.pure(x)
+   def flatMap[A, B](fa: F[A])(f: A => F[B]): F[B]        = M.flatMap(fa)(f)
+   def tailRecM[A, B](a: A)(f: A => F[Either[A,B]]): F[B] = M.tailRecM(a)(f)
+   def empty[A]: F[A]                                     = A.empty
+   def combineK[A](x: F[A],y: F[A]): F[A]                 = A.combineK(x, y)
+}
+
 /*
 object Parser {
 
@@ -176,12 +217,6 @@ object Parser {
       .gather(pattern, text.toList)
       .map(res => SimpleMatch(res.steps.reverse))
       .minBy(_.score)
-
-  val parseConcat: Parser[Unit] =
-    for {
-      ps <- whenPatternIs { case Concat(ps) => ps }
-      _  <- traverse_(ps) { p => withPattern(p, parsePattern) }
-    } yield ()
 
   val parsePattern: Parser[Unit] =
     (parseConcat ++
@@ -209,16 +244,6 @@ object Parser {
         if (f.isDefinedAt(pattern)) List(Result(Nil, text, f(pattern)))
         else                        Nil
     }
-
-  // TODO as with many of these methods, can be replaced with standard cats functionality prtty easily
-  def traverse_[A](values: Seq[A])(f: A => Parser[Unit]): Parser[Unit] =
-    values match {
-      case Nil          => pure(())
-      case head +: tail => f(head).flatMap(_ => traverse_(tail)(f))
-    }
-
-  def pure[A](value: A): Parser[A] =
-    Parser((_, text) => List(Result(Nil, text, value)))
 }
 
 case class SimpleMatch(steps: List[Step]) extends Match {
