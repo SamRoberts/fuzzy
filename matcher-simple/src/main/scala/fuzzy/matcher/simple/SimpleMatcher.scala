@@ -84,14 +84,6 @@ object Parser {
              A: Alternative[F]
   ): CanParse[F] = StateTellCanParse()(S, T, M, A)
 
-  def parseConcat[F[_]: CanParse](parseInners: List[F[Unit]]): F[Unit] = {
-    // bizarrely, this code causes the guard calls to stop compiling?!?
-    parseInners.sequence_
-  }
-
-  def parseGroup[F[_]: CanParse, A](parseInner: F[A]): F[A] =
-    record[F](Steps.enter) *> parseInner <* record(Steps.leave)
-
   def parseKleene[F[_]: CanParse](parseInner: F[Unit]): F[Unit] =
     allRepetitionsOf(progressive(parseInner))
 
@@ -113,16 +105,26 @@ object Parser {
       _ <- record(Steps.matchChar(l))
     } yield ()
 
+  def parsePattern[F[_]: CanParse](pattern: Pattern): F[Unit] = {
+    val noSkipChar = pattern match {
+      case Pattern.Any        => skipAny <+> matchAny
+      case Pattern.Lit(c)     => skipLit(c) <+> matchLit(c)
+      case Pattern.Group(p)   => parseGroup(parsePattern(p))
+      case Pattern.Kleene(p)  => parseKleene(parsePattern(p))
+      case Pattern.Concat(ps) => ps.toList.traverse_(parsePattern[F])
+    }
+
+    (skipChar >> parsePattern(pattern)) <+> noSkipChar
+  }
+
+  def parseGroup[F[_]: CanParse, A](parseInner: F[A]): F[A] =
+    record[F](Steps.enter) *> parseInner <* record(Steps.leave)
+
+
   def matchAny[F[_]: CanParse]: F[Unit] =
     for {
       c <- popChar[F]
       _ <- record(Steps.matchChar(c))
-    } yield ()
-
-  def skipText[F[_]: CanParse]: F[Unit] =
-    for {
-      c <- popChar[F]
-      _ <- record(Steps.skipText(c))
     } yield ()
 
   def skipAny[F[_]: CanParse]: F[Unit] =
@@ -130,6 +132,12 @@ object Parser {
 
   def skipLit[F[_]: CanParse](l: Char): F[Unit] =
     record(Steps.skipLit(l))
+
+  def skipChar[F[_]: CanParse]: F[Unit] =
+    for {
+      c <- popChar[F]
+      _ <- record(Steps.skipText(c))
+    } yield ()
 
   def popChar[F[_]](implicit F: CanParse[F]): F[Char] =
     F.popChar
