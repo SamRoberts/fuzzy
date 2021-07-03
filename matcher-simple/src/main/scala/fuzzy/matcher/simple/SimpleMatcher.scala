@@ -14,20 +14,21 @@
 
 package fuzzy.matcher.simple
 
-import cats.{Alternative, Eval, Functor, Monad, Monoid}
+import annotation.tailrec
+
+import cats.{Alternative, Applicative, Functor, Monad, Monoid}
 import cats.data.{IndexedStateT, Nested, ReaderT, StateT, Writer}
 import cats.mtl.{Ask, Stateful, Tell}
+import cats.instances._
 import cats.implicits._
 
-import fs2.Stream
+import fs2.{Pure, Stream}
 
 import cats.instances.function._
 
 import fuzzy.api.{Match, Matcher, Pattern}
 
 import java.util.HashMap
-
-case class Result[A](steps: List[Step], rest: List[Char], value: A)
 
 case class Steps(score: Int, steps: List[Step])
 
@@ -38,6 +39,7 @@ object Steps {
   val skipAny            = Steps(1, List(Step.SkipAny))
   val enter              = Steps(0, List(Step.Enter))
   val leave              = Steps(0, List(Step.Leave))
+  val empty              = Steps(0, Nil)
 
   implicit val stepsMonoid = new Monoid[Steps] {
     def combine(x: Steps, y: Steps) = Steps(x.score + y.score, x.steps ++ y.steps)
@@ -55,6 +57,7 @@ object Step {
   case object Enter extends Step
   case object Leave extends Step
 }
+
 case class SimpleMatcher(pattern: Pattern) extends Matcher {
   def score(text: String): Match =
     // TODO each call to score should create it's own parser instance, so old cached results don't accumulate forever
@@ -62,214 +65,157 @@ case class SimpleMatcher(pattern: Pattern) extends Matcher {
     ???
 }
 
+case class PartParser[A](run: List[Char] => List[PartParser.Result[A]])
+
+object PartParser {
+  case class Result[A](rest: List[Char], steps: Steps, value: A)
+
+  implicit val instances = new Monad[PartParser] with Alternative[PartParser] {
+    def empty[A] = PartParser(text => Nil)
+
+    def combineK[A](x: PartParser[A], y: PartParser[A]) =
+      PartParser(text =>
+        x.run(text) ++ y.run(text)
+      )
+
+    def pure[A](a: A) = PartParser(text => List(Result(text, Monoid[Steps].empty, a))) 
+
+    def flatMap[A, B](fa: PartParser[A])(f: A => PartParser[B]) =
+      PartParser(text =>
+        for {
+          resA <- fa.run(text)
+          resB <- f(resA.value).run(resA.rest)
+        } yield Result(resB.rest, resA.steps |+| resB.steps, resB.value)
+      )
+
+  def tailRecM[A, B](a: A)(f: A => PartParser[Either[A, B]]): PartParser[B] =
+    PartParser(text => {
+      @tailrec
+      def inner(acc: List[Result[B]], resAs: List[Result[A]]): List[Result[B]] = {
+        val (newResAs, newAcc) = resAs
+                                   .flatMap(resA => f(resA.value).run(resA.rest))
+                                   .map {
+                                     case Result(steps, rest, Left(a))  => Left(Result(steps, rest, a))
+                                     case Result(steps, rest, Right(b)) => Right(Result(steps, rest, b))
+                                   }
+                                   .separate
+        inner(newAcc ++ acc, newResAs)
+      }
+      inner(Nil, List(Result(text, Monoid[Steps].empty, a)))
+    })
+  }
+}
+
+case class FullParser[A](run: (Caches, List[Char]) => FullParser.Result[A])
+
+object FullParser {
+  case class Result[A](steps: Steps, value: A)
+}
+
+// WARNING: the id String is a hack to do equality on functions.
+//
+// Given two calls memoise(id1)(f1) and memoise(id2)(f2)
+// We MUST ensure that if f1 != f2, then id1 != id2
+// We should also ensure that if f1 == f2, then id1 == id2, but this is less important
+//
+// This whole memoisation approach is a bit off, but should work nicely for this code.
+class Caches() {
+  private val caches: HashMap[String, HashMap[_, _]] = new HashMap()
+
+  def memoise[A, B](id: String, f: A => B): A => B = {
+    val cache =
+      Option(caches.get(id)) match {
+        case Some(cache) =>
+          cache
+        case None =>
+          val cache = new HashMap[A, B]()
+          caches.put(id, cache)
+          cache
+      }
+
+    val typedCache = cache.asInstanceOf[HashMap[A,B]]
+
+    (a: A) =>
+      Option(typedCache.get(a)) match {
+        case Some(b) =>
+          b
+        case None =>
+          val b = f(a)
+          typedCache.put(a, b)
+          b
+      }
+  }
+}
+
 object Parser {
 
-  type Result[A]     = Writer[Steps, A]
-  type Choices[A]    = Stream[Eval, A]
-  type Results[A]    = Nested[Choices, Result, A]
-  type PartParser[A] = StateT[Results, List[Char], A]
-
-  type FullParser[A] = IndexedStateT[Results, List[Char], Nil.type, A]
-  type BestParser[A] = IndexedStateT[Result, List[Char], Nil.type, A]
-  type MemoParser[A] = ReaderT[BestParser, Caches, A]
-
-  type AskCaches[F[_]]  = Ask[F, Caches]
-  type StatefulText[F[_]] = Stateful[F, List[Char]]
-  type TellSteps[F[_]]   = Tell[F, Steps]
-
-  implicit def canParse[F[_]](
-    implicit S: StatefulText[F],
-             T: TellSteps[F],
-             M: Monad[F],
-             A: Alternative[F]
-  ): CanParse[F] = StateTellCanParse()(S, T, M, A)
-
-  def parseKleene[F[_]: CanParse](parseInner: F[Unit]): F[Unit] =
-    allRepetitionsOf(progressive(parseInner))
-
-  def progressive[F[_]: CanParse, A](parseInner: F[A]): F[A] =
-    for {
-      before <- peekText[F]
-      res    <- parseInner
-      after  <- peekText
-      _      <- (before != after).guard
-    } yield res
-
-  def allRepetitionsOf[F[_]](parseInner: F[Unit])(implicit F: CanParse[F]): F[Unit] =
-    F.pure(()) <+> (parseInner >> allRepetitionsOf(parseInner))
- 
-  def matchLit[F[_]: CanParse](l: Char): F[Unit] =
-    for {
-      c <- popChar[F]
-      _ <- (c == l).guard
-      _ <- record(Steps.matchChar(l))
-    } yield ()
-
-  def parsePattern[F[_]: CanParse](pattern: Pattern): F[Unit] = {
+  def parsePattern(pattern: Pattern): PartParser[Unit] = {
     val noSkipChar = pattern match {
       case Pattern.Any        => skipAny <+> matchAny
       case Pattern.Lit(c)     => skipLit(c) <+> matchLit(c)
       case Pattern.Group(p)   => parseGroup(parsePattern(p))
       case Pattern.Kleene(p)  => parseKleene(parsePattern(p))
-      case Pattern.Concat(ps) => ps.toList.traverse_(parsePattern[F])
+      case Pattern.Concat(ps) => ps.toList.traverse_(parsePattern)
     }
 
     (skipChar >> parsePattern(pattern)) <+> noSkipChar
   }
 
-  def parseGroup[F[_]: CanParse, A](parseInner: F[A]): F[A] =
-    record[F](Steps.enter) *> parseInner <* record(Steps.leave)
+  def parseKleene(parseInner: PartParser[Unit]): PartParser[Unit] =
+    allRepetitionsOf(progressive(parseInner))
 
-
-  def matchAny[F[_]: CanParse]: F[Unit] =
+  def progressive[A](parseInner: PartParser[A]): PartParser[A] =
     for {
-      c <- popChar[F]
+      before <- peekText
+      res    <- parseInner
+      after  <- peekText
+      _      <- (before != after).guard[PartParser]
+    } yield res
+
+  def allRepetitionsOf(parseInner: PartParser[Unit]): PartParser[Unit] =
+    pure(()) <+> (parseInner >> allRepetitionsOf(parseInner))
+ 
+  def parseGroup[A](parseInner: PartParser[A]): PartParser[A] =
+    record(Steps.enter) *> parseInner <* record(Steps.leave)
+
+  def matchLit(l: Char): PartParser[Unit] =
+    for {
+      c <- popChar
+      _ <- (c == l).guard[PartParser]
+      _ <- record(Steps.matchChar(l))
+    } yield ()
+
+  def matchAny: PartParser[Unit] =
+    for {
+      c <- popChar
       _ <- record(Steps.matchChar(c))
     } yield ()
 
-  def skipAny[F[_]: CanParse]: F[Unit] =
+  def skipAny: PartParser[Unit] =
     record(Steps.skipAny)
 
-  def skipLit[F[_]: CanParse](l: Char): F[Unit] =
+  def skipLit(l: Char): PartParser[Unit] =
     record(Steps.skipLit(l))
 
-  def skipChar[F[_]: CanParse]: F[Unit] =
+  def skipChar: PartParser[Unit] =
     for {
-      c <- popChar[F]
+      c <- popChar
       _ <- record(Steps.skipText(c))
     } yield ()
 
-  def popChar[F[_]](implicit F: CanParse[F]): F[Char] =
-    F.popChar
-
-  def peekText[F[_]](implicit F: CanParse[F]): F[List[Char]] =
-    F.peekText
-
-  def record[F[_]](steps: Steps)(implicit F: CanParse[F]): F[Unit] =
-    F.record(steps)
-
-  def pure[F[_], A](a: A)(implicit F: CanParse[F]): F[A] =
-    F.pure(a)
-
-  // WARNING: the id String is a hack to do equality on functions.
-  //
-  // Given two calls memoise(id1)(f1) and memoise(id2)(f2)
-  // We MUST ensure that if f1 != f2, then id1 != id2
-  // We should also ensure that if f1 == f2, then id1 == id2, but this is less important
-  //
-  // This whole memoisation approach is a bit off, but should work nicely for this code.
-  def memoise[F[_]: Functor, A, B](id: String)(f: A => B)(implicit F: AskCaches[F]): F[A => B] =
-    F.ask.map(_.memoise(id, f))
-
-  class Caches() {
-    private val caches: HashMap[String, HashMap[_, _]] = new HashMap()
-
-    def memoise[A, B](id: String, f: A => B): A => B = {
-      val cache =
-        Option(caches.get(id)) match {
-          case Some(cache) =>
-            cache
-          case None =>
-            val cache = new HashMap[A, B]()
-            caches.put(id, cache)
-            cache
-        }
-
-      val typedCache = cache.asInstanceOf[HashMap[A,B]]
-
-      (a: A) =>
-        Option(typedCache.get(a)) match {
-          case Some(b) =>
-            b
-          case None =>
-            val b = f(a)
-            typedCache.put(a, b)
-            b
-        }
-    }
-  }
-}
-
-trait CanParse[F[_]] extends Monad[F] with Alternative[F] {
-  def record(steps: Steps): F[Unit]
-  def peekText: F[List[Char]]
-  def popChar: F[Char]
-}
-
-case class StateTellCanParse[F[_]](implicit S: Parser.StatefulText[F], T: Parser.TellSteps[F], M: Monad[F], A: Alternative[F]) extends CanParse[F] {
-
-  def record(steps: Steps): F[Unit] =
-    T.tell(steps)
-
-  def peekText: F[List[Char]] =
-    S.get
-
-  def popChar: F[Char] =
-    S.get.flatMap {
-      case char :: rest => S.set(rest) >> M.pure(char)
-      case Nil          => A.empty[Char]
+  def popChar: PartParser[Char] =
+    PartParser {
+      case Nil         => Nil
+      case chr :: rest => List(PartParser.Result(rest, Steps.empty, chr))
     }
 
-   def pure[A](x: A): F[A]                                = M.pure(x)
-   def flatMap[A, B](fa: F[A])(f: A => F[B]): F[B]        = M.flatMap(fa)(f)
-   def tailRecM[A, B](a: A)(f: A => F[Either[A,B]]): F[B] = M.tailRecM(a)(f)
-   def empty[A]: F[A]                                     = A.empty
-   def combineK[A](x: F[A],y: F[A]): F[A]                 = A.combineK(x, y)
+  def peekText: PartParser[List[Char]] =
+    PartParser(text => List(PartParser.Result(text, Steps.empty, text)))
+
+  def record(steps: Steps): PartParser[Unit] =
+    PartParser(text => List(PartParser.Result(text, steps, ())))
+
+  def pure[A](a: A): PartParser[A] =
+    PartParser(text => List(PartParser.Result(text, Steps.empty, a)))
 }
 
-/*
-object Parser {
-
-  def score(pattern: Pattern, text: String): Match =
-    parsePatternToEnd
-      .gather(pattern, text.toList)
-      .map(res => SimpleMatch(res.steps.reverse))
-      .minBy(_.score)
-
-  val parsePattern: Parser[Unit] =
-    (parseConcat ++
-    parseKleene ++
-    parseGroup ++
-    matchAny ++
-    matchLit ++
-    skipAny ++
-    skipLit ++
-    skipText.flatMap(_ => parsePattern)).memoised
-
-  val parsePatternToEnd: Parser[Unit] =
-    for {
-      _    <- parsePattern
-      left <- peekRemainingText
-      _    <- traverse_(left)(c => record(SkipText(c)))
-    } yield ()
-
-  def withPattern[A](p: Pattern, matcher: Parser[A]): Parser[A] =
-    Parser((_, text) => matcher.gather(p, text))
-
-  def whenPatternIs[P](f: PartialFunction[Pattern, P]): Parser[P] =
-    Parser {
-      (pattern, text) =>
-        if (f.isDefinedAt(pattern)) List(Result(Nil, text, f(pattern)))
-        else                        Nil
-    }
-}
-
-case class SimpleMatch(steps: List[Step]) extends Match {
-
-  import Step._
-
-  def score: Int =
-    steps.map {
-      case _: MatchChar => 0
-      case _: SkipText  => 1
-      case _: SkipLit   => 1
-      case SkipAny      => 1
-      case Enter        => 0
-      case Leave        => 0
-    }.sum
-
-  // TODO share match API with real implementation
-  def matchedText: String =
-    steps.collect { case MatchChar(c) => c }.mkString
-}
-*/
