@@ -30,7 +30,10 @@ import fuzzy.api.{Match, Matcher, Pattern}
 
 import java.util.HashMap
 
-case class Steps(score: Int, steps: List[Step])
+case class Steps(score: Int, steps: List[Step]) extends Match {
+  def matchedText: String =
+    steps.collect { case Step.MatchChar(c) => c }.mkString
+}
 
 object Steps {
   def matchChar(c: Char) = Steps(0, List(Step.MatchChar(c)))
@@ -59,10 +62,13 @@ object Step {
 }
 
 case class SimpleMatcher(pattern: Pattern) extends Matcher {
-  def score(text: String): Match =
-    // TODO each call to score should create it's own parser instance, so old cached results don't accumulate forever
-    // One of the MemoParser instances I create below should fully parse the given text using all available strategies
-    ???
+
+  val parser = FullParser.parsePattern(pattern)
+
+  def score(text: String): Match = {
+    val caches = new Caches()
+    parser.run(caches)(text.toList).steps
+  }
 }
 
 case class PartParser[A](run: List[Char] => List[PartParser.Result[A]])
@@ -104,50 +110,6 @@ object PartParser {
       inner(Nil, List(Result(text, Monoid[Steps].empty, a)))
     })
   }
-}
-
-case class FullParser[A](run: (Caches, List[Char]) => FullParser.Result[A])
-
-object FullParser {
-  case class Result[A](steps: Steps, value: A)
-}
-
-// WARNING: the id String is a hack to do equality on functions.
-//
-// Given two calls memoise(id1)(f1) and memoise(id2)(f2)
-// We MUST ensure that if f1 != f2, then id1 != id2
-// We should also ensure that if f1 == f2, then id1 == id2, but this is less important
-//
-// This whole memoisation approach is a bit off, but should work nicely for this code.
-class Caches() {
-  private val caches: HashMap[String, HashMap[_, _]] = new HashMap()
-
-  def memoise[A, B](id: String, f: A => B): A => B = {
-    val cache =
-      Option(caches.get(id)) match {
-        case Some(cache) =>
-          cache
-        case None =>
-          val cache = new HashMap[A, B]()
-          caches.put(id, cache)
-          cache
-      }
-
-    val typedCache = cache.asInstanceOf[HashMap[A,B]]
-
-    (a: A) =>
-      Option(typedCache.get(a)) match {
-        case Some(b) =>
-          b
-        case None =>
-          val b = f(a)
-          typedCache.put(a, b)
-          b
-      }
-  }
-}
-
-object Parser {
 
   def parsePattern(pattern: Pattern): PartParser[Unit] = {
     val noSkipChar = pattern match {
@@ -158,7 +120,7 @@ object Parser {
       case Pattern.Concat(ps) => ps.toList.traverse_(parsePattern)
     }
 
-    (skipChar >> parsePattern(pattern)) <+> noSkipChar
+    (skipText >> parsePattern(pattern)) <+> noSkipChar
   }
 
   def parseKleene(parseInner: PartParser[Unit]): PartParser[Unit] =
@@ -197,7 +159,7 @@ object Parser {
   def skipLit(l: Char): PartParser[Unit] =
     record(Steps.skipLit(l))
 
-  def skipChar: PartParser[Unit] =
+  def skipText: PartParser[Unit] =
     for {
       c <- popChar
       _ <- record(Steps.skipText(c))
@@ -219,3 +181,76 @@ object Parser {
     PartParser(text => List(PartParser.Result(text, Steps.empty, a)))
 }
 
+case class FullParser(functionId: String, run: Caches => (List[Char] => FullParser.Result))
+
+object FullParser {
+  case class Result(steps: Steps)
+
+  def parsePattern(pattern: Pattern): FullParser = pattern match {
+    case Pattern.Concat(ps) => ps.foldRight(skipRemainingText)(prependPattern(_, _))
+    case _                  => prependPattern(pattern, skipRemainingText)
+  }
+
+  def prependPattern(first: Pattern, last: FullParser): FullParser = {
+    val firstP     = PartParser.parsePattern(first)
+    val functionId = first.toString + ", " + last.functionId
+
+    FullParser(functionId, caches => {
+      caches.memoise(functionId) { text =>
+        firstP.run(text) match {
+          case Nil =>
+            // TODO introduce another split between PartParser which can fail and PartParser which can't?
+            throw new Exception("impossible")
+
+          case res =>
+            val lastRun = last.run(caches)
+            val paths   = res.map(firstRun => firstRun.steps |+| lastRun(firstRun.rest).steps)
+            val best    = paths.minBy(_.score)
+            Result(best)
+        }
+      }
+    })
+  }
+
+  def skipRemainingText: FullParser =
+    atomic("SkipRemaining")(text => Result(text.foldMap(Steps.skipText)))
+
+  def atomic[A](functionId: String)(f: List[Char] => Result): FullParser = {
+    FullParser(functionId, _.memoise(functionId)(f))
+  }
+}
+
+// WARNING: the id String is a hack to do equality on functions.
+//
+// Given two calls memoise(id1)(f1) and memoise(id2)(f2)
+// We MUST ensure that f1 != f2 implies id1 != id2
+// We should also ensure that f1 == f2 implies id1 == id2, but this is less important
+//
+// This whole memoisation approach is a bit off, but should work nicely for this code.
+class Caches() {
+  private val caches: HashMap[String, HashMap[_, _]] = new HashMap()
+
+  def memoise[A, B](id: String)(f: A => B): A => B = {
+    val cache =
+      Option(caches.get(id)) match {
+        case Some(cache) =>
+          cache
+        case None =>
+          val cache = new HashMap[A, B]()
+          caches.put(id, cache)
+          cache
+      }
+
+    val typedCache = cache.asInstanceOf[HashMap[A,B]]
+
+    (a: A) =>
+      Option(typedCache.get(a)) match {
+        case Some(b) =>
+          b
+        case None =>
+          val b = f(a)
+          typedCache.put(a, b)
+          b
+      }
+  }
+}
