@@ -67,7 +67,63 @@ case class SimpleMatcher(pattern: Pattern) extends Matcher {
 
   def score(text: String): Match = {
     val caches = new Caches()
-    parser.run(caches)(text.toList).steps
+    val res = parser.run(caches)(text.toList).steps
+    caches.printState
+    res
+  }
+}
+
+// OK, so this is better than nothing, but we still take ages occassionally,
+// I think probably when we generate a large enough pattern which is entirely
+// surrounded by a group or kleene, at which point the intermediate caching
+// in FullParser doesn't help at all.
+//
+// It really feels like we have to figure out how to make FullParser insert
+// it's caching tendrils into nested patterns, maybe to the point of doing
+// everything with FullParsers?
+//
+// I don't think this is going to look much like traditional parsers by the
+// time I am finished, but maybe that was never going to work ...
+//
+// On the  bright side, all the tests passed first thing when I finished this
+// code! Amazing how well that works!
+
+case class FullParser(functionId: String, run: Caches => (List[Char] => FullParser.Result))
+
+object FullParser {
+  case class Result(steps: Steps)
+
+  def parsePattern(pattern: Pattern): FullParser = pattern match {
+    case Pattern.Concat(ps) => ps.foldRight(skipRemainingText)(prependPattern(_, _))
+    case _                  => prependPattern(pattern, skipRemainingText)
+  }
+
+  def prependPattern(first: Pattern, last: FullParser): FullParser = {
+    val firstP     = PartParser.parsePattern(first)
+    val functionId = first.toString + ", " + last.functionId
+
+    FullParser(functionId, caches => {
+      caches.memoise(functionId) { text =>
+        firstP.run(text) match {
+          case Nil =>
+            // TODO introduce another split between PartParser which can fail and PartParser which can't?
+            throw new Exception("impossible")
+
+          case res =>
+            val lastRun = last.run(caches)
+            val paths   = res.map(firstRun => firstRun.steps |+| lastRun(firstRun.rest).steps)
+            val best    = paths.minBy(_.score)
+            Result(best)
+        }
+      }
+    })
+  }
+
+  def skipRemainingText: FullParser =
+    atomic("SkipRemaining")(text => Result(text.foldMap(Steps.skipText)))
+
+  def atomic[A](functionId: String)(f: List[Char] => Result): FullParser = {
+    FullParser(functionId, _.memoise(functionId)(f))
   }
 }
 
@@ -181,45 +237,6 @@ object PartParser {
     PartParser(text => List(PartParser.Result(text, Steps.empty, a)))
 }
 
-case class FullParser(functionId: String, run: Caches => (List[Char] => FullParser.Result))
-
-object FullParser {
-  case class Result(steps: Steps)
-
-  def parsePattern(pattern: Pattern): FullParser = pattern match {
-    case Pattern.Concat(ps) => ps.foldRight(skipRemainingText)(prependPattern(_, _))
-    case _                  => prependPattern(pattern, skipRemainingText)
-  }
-
-  def prependPattern(first: Pattern, last: FullParser): FullParser = {
-    val firstP     = PartParser.parsePattern(first)
-    val functionId = first.toString + ", " + last.functionId
-
-    FullParser(functionId, caches => {
-      caches.memoise(functionId) { text =>
-        firstP.run(text) match {
-          case Nil =>
-            // TODO introduce another split between PartParser which can fail and PartParser which can't?
-            throw new Exception("impossible")
-
-          case res =>
-            val lastRun = last.run(caches)
-            val paths   = res.map(firstRun => firstRun.steps |+| lastRun(firstRun.rest).steps)
-            val best    = paths.minBy(_.score)
-            Result(best)
-        }
-      }
-    })
-  }
-
-  def skipRemainingText: FullParser =
-    atomic("SkipRemaining")(text => Result(text.foldMap(Steps.skipText)))
-
-  def atomic[A](functionId: String)(f: List[Char] => Result): FullParser = {
-    FullParser(functionId, _.memoise(functionId)(f))
-  }
-}
-
 // WARNING: the id String is a hack to do equality on functions.
 //
 // Given two calls memoise(id1)(f1) and memoise(id2)(f2)
@@ -252,5 +269,12 @@ class Caches() {
           typedCache.put(a, b)
           b
       }
+  }
+
+  def printState(): Unit = {
+    import collection.JavaConverters._
+    println("")
+    println("-----------------------------------------------")
+    caches.asScala.foreach { case (key, cache) => println(s"$key: ${cache.size}") }
   }
 }
