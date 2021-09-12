@@ -27,13 +27,9 @@ To do
 -----
 
 - Improve practical use of tool based on real world experience:
-  - Extend pattern to enable us to give moer restricted forms of "variable text"
-  - Create a more powerful xml based pattern language to enable named matches and other non-regex tools
-    Regex pattern would then desugar to this more powerful representation
-  - Create a more powerful default output corresponding to xml pattern with inserted and skipped markup
-  - Create a cli mode which reads the xml output and produces specific parts of the output (e.g. matched text, specific groups, etc)
-- Improve efficiency of simple implementation so existing test suite doesn't
-  randomly take forever if we generate larger text/pattern than normal.
+  - Extend pattern to enable us to give more restricted forms of "variable text"
+  - Create a more powerful yaml based pattern representation to enable named matches and other non-regex tools
+  - Make Match more detailed and create a yaml based representation for it
 - Get benchmarks up and running and then start investigating whether we can
   make code more optimised and safer. Current approach is both overly
   simplistic but also more skeptical of creating new objects than standard
@@ -41,16 +37,14 @@ To do
 - Think about how to reduce memory usage. How many cells in early rows in
   table will never be visited by any of the optimal traversals we are tracking
   from later rows?
-- Evaluate cost of parsing pattern vs. cost of using pattern to parse text.
-  Do we need to optimize parsing the pattern?
 - Can we support generic monadic parsing rather than just regex inspired
-  pattern?  will require both effiency and a more dynamic replacement for
+  pattern?  Will require both effiency and a more dynamic replacement for
   tables
-- Support for pluggable visualisation mechanisms, possibly only on inefficient
-  algorithm.
+- Support for optional reporting of lots of intermediate state in yaml output,
+  and visualisation mechanisms for that output. Can we stream output?
 - Think about parallelisation. If we had no kleene stars, we could potentially
   process all elements in pattern in parallel, as long as we process from
-  (end,end) to (start,start) in a "diagonaal-breadth-first" pattern. This would
+  (end,end) to (start,start) in a "diagonal-breadth-first" pattern. This would
   require elements on the diagonal to be computed in lock-step and elements at
   step N to be available to computations at step N+1. Not sure how badly the
   precence of kleene stars in pattern interferes with this?
