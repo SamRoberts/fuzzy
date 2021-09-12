@@ -4,7 +4,7 @@ val apiVersion            = "0.3.0"
 val apiTestkitVersion     = "0.2.0"
 val cliVersion            = "0.3.0"
 val matcherTestkitVersion = "0.3.0"
-val matcherSimpleVersion  = "0.2.1"
+val matcherSimpleVersion  = "0.3.0"
 val matcherLoopVersion    = "0.2.0"
 
 // TODO upgrade to latest stable version of libraries: last updated in 2020, but newer vesion of cats-mtl probably bring in newer versions then stated below
