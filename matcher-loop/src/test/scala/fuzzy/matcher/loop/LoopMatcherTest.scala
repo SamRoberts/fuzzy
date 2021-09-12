@@ -21,7 +21,7 @@ import fuzzy.matcher.simple.SimpleMatcher
 import fuzzy.matcher.testkit.{MatcherBoundTests, MatcherComparisonTests, MatcherExactTests}
 
 object LoopNatcherTest extends MatcherExactTests with MatcherBoundTests with MatcherComparisonTests {
-  override def slowestMatcherPatternSizeBound: Int = 2
+  override def slowestMatcherPatternSizeBound: Int = 4
   override def matcherPatternSizeBound: Int = 9
   override def matcherLiteralSizeBound: Int = 100
   override def matcherTextSizeBound: Int = 100

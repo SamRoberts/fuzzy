@@ -10,10 +10,8 @@ val matcherLoopVersion    = "0.2.0"
 // TODO upgrade to latest stable version of libraries: last updated in 2020, but newer vesion of cats-mtl probably bring in newer versions then stated below
 val catsCore      = "org.typelevel" %% "cats-core"      % "2.1.1"
 val catsEffect    = "org.typelevel" %% "cats-effect"    % "2.1.4"
-val catsMtl       = "org.typelevel" %% "cats-mtl"       % "1.2.0"
 val declineEffect = "com.monovore"  %% "decline-effect" % "1.0.0"
 val fastparse     = "com.lihaoyi"   %% "fastparse"      % "2.3.2"
-val fs2Core       = "co.fs2"        %% "fs2-core"       % "2.5.3"
 val hedgehogSbt   = "qa.hedgehog"   %% "hedgehog-sbt"   % "4d4763691024de171c6e10f6bd9aa996a174d296"
 
 def testDependencies(dependencyConfig: String) = List(hedgehogSbt).map(_ % dependencyConfig)
@@ -21,7 +19,7 @@ def testDependencies(dependencyConfig: String) = List(hedgehogSbt).map(_ % depen
 val apiDeps            = List(fastparse)
 val apiTestkitDeps     = testDependencies("compile")
 val cliDeps            = List(catsCore, catsEffect, declineEffect)
-val matcherSimpleDeps  = List(catsCore, catsMtl, fs2Core)
+val matcherSimpleDeps  = List()
 val matcherTestkitDeps = testDependencies("compile")
 
 lazy val api = (project in file("api"))

@@ -81,6 +81,16 @@ object PatternGen {
       case Pattern.Concat(ps) => traverse(ps.toList)(p => transformPattern(p, unchangedFrequency, changeFrequency)(change)).map(Pattern.Concat(_))
     }
 
-    transformInner.flatMap(p => change.applyOrElse(p, (p: Pattern) => Gen.constant(p)))
+    val sometimesChange =
+      (pattern: Pattern) =>
+        if (change.isDefinedAt(pattern))
+          Gen.frequency1(
+            changeFrequency    -> change(pattern),
+            unchangedFrequency -> Gen.constant(pattern)
+          )
+        else
+          Gen.constant(pattern)
+
+    transformInner.flatMap(sometimesChange)
   }
 }

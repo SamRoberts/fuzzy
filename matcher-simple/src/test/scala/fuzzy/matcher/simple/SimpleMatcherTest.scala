@@ -20,9 +20,9 @@ import fuzzy.api.{Matcher, Pattern}
 import fuzzy.matcher.testkit.{MatcherBoundTests, MatcherComparisonTests, MatcherExactTests}
 
 object SimpleMatcherTest extends MatcherExactTests with MatcherBoundTests {
-  override def matcherPatternSizeBound: Int = 4
-  override def matcherLiteralSizeBound: Int = 4
-  override def matcherTextSizeBound: Int = 4
+  override def matcherPatternSizeBound: Int = 6
+  override def matcherLiteralSizeBound: Int = 100
+  override def matcherTextSizeBound: Int = 100
   override def matcherAlphabetSizeBound: Int = 30
 
   override def mkMatcher(pattern: Pattern): Matcher = SimpleMatcher(pattern)

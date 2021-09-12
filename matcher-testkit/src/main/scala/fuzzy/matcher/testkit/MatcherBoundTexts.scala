@@ -45,7 +45,8 @@ trait MatcherBoundTests extends StackableProperties {
   override def tests: List[Test] =
     super.tests ++ List(
       property("<abc>* matching a repeated different text",  testArbKleeneMatchDiffRepeated),
-      property(". matches more than <a>", testWildcardMatchesMoreThanLiteral)
+      property(". matches more than <a>", testWildcardMatchesMoreThanLiteral),
+      property("<NO PROGRESS>* are handled correctly (empty text only)", testInfiniteLoopCheck)
     )
 
   def testArbKleeneMatchDiffRepeated: Property =
@@ -76,5 +77,28 @@ trait MatcherBoundTests extends StackableProperties {
       Result.diffNamed("=== Literal pattern score less than wildcard pattern ===", result1.score, result2.score)(_ >= _)
     }
   }
+
+  def testInfiniteLoopCheck: Property =
+    // TODO this test is meant to trigger bugs in the simple matcher infinite loop short cut
+    //      this highly specific test gen is probably missing a lot of valuable related cases
+    //      there is probably a broader underlying test for "bad kleenes" we could get at
+    for {
+      literalMapper     <- StringGen.alphabetGenAndMapper(
+                             Range.linear(1, matcherTextSizeBound / 4),
+                             Range.linear(1, matcherAlphabetSizeBound)
+                           ).forAll
+      (literal, mapper)  = literalMapper
+      basePattern        = Pattern.literal(literal)
+      kleenePattern     <- PatternGen.transformPattern(basePattern, 2, 1) {
+                             case Pattern.Lit(c) => Gen.constant(Pattern.Kleene(Pattern.Lit(mapper(c))))
+                           }.forAll
+      noKleenePattern   <- PatternGen.transformPattern(kleenePattern, 1, 3) {
+                             case Pattern.Kleene(_) => Gen.constant(Pattern.Concat(List()))
+                           }.forAll
+      kleeneResult       = mkMatcher(kleenePattern).score("")
+      noKleeneResult     = mkMatcher(noKleenePattern).score("")
+    } yield {
+      Result.diffNamed("=== Kleene patterns which matched nothing changed score ===", kleeneResult.score, noKleeneResult.score)(_ == _)
+    }
 }
 
