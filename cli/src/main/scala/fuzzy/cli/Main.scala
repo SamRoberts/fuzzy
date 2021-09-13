@@ -26,6 +26,7 @@ import java.nio.file.{Files, Paths, Path}
 
 import fuzzy.api.{Pattern, Matcher}
 import fuzzy.matcher.loop.LoopMatcher
+import fuzzy.pattern.regex.RegexPattern
 
 object Main extends CommandIOApp(
   name = "fuzzy",
@@ -67,7 +68,7 @@ object Main extends CommandIOApp(
       (patternPath, textPath) => for {
 
         pattern <- readPath(patternPath)
-        pattern <- IO.fromEither(Pattern.parse(pattern).leftMap(new Exception(_)))
+        pattern <- IO.fromEither(RegexPattern.parse(pattern).leftMap(new Exception(_)))
         text    <- readPath(textPath)
         matcher  = mkMatcher(pattern)
         result   = matcher.score(text)

@@ -12,15 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package fuzzy.api
+package fuzzy.pattern.regex
 
 import hedgehog.{Gen, Property, Range, Result, Syntax}
 import hedgehog.runner.{Properties, Test, property}
 
+import fuzzy.api.Pattern
 import fuzzy.api.testkit.{PatternGen, StringGen}
 
 /** Simple pattern tests that check the exact match and score of simple pattern building blocks. */
-object PatternTest extends Properties {
+object RegexPatternTest extends Properties {
 
   def tests: List[Test] =
     List(
@@ -48,8 +49,8 @@ object PatternTest extends Properties {
     for {
       pattern <- PatternGen.pattern(Range.linear(0, 12)).forAll
     } yield {
-      val canonical = Pattern.parse(print(pattern))
-      val roundtrip = canonical.right.flatMap(p => Pattern.parse(print(p)))
+      val canonical = RegexPattern.parse(print(pattern))
+      val roundtrip = canonical.right.flatMap(p => RegexPattern.parse(print(p)))
 
       Result.assert(canonical.isRight) and // bad error message if this fails, but should never fail
       (roundtrip ==== canonical)
@@ -59,7 +60,7 @@ object PatternTest extends Properties {
     for {
       patternStr <- StringGen.literal(Range.linear(0, 100)).forAll
     } yield {
-      val pattern1 = Pattern.parse(patternStr)
+      val pattern1 = RegexPattern.parse(patternStr)
       val pattern2 = Pattern.literal(patternStr)
       pattern1 ==== Right(pattern2)
     }
@@ -88,7 +89,7 @@ object PatternTest extends Properties {
                       .filter(isMismatched)
                       .forAll
     } yield {
-      val pattern = Pattern.parse(patternStr)
+      val pattern = RegexPattern.parse(patternStr)
       Result.assert(pattern.isLeft)
     }
   }

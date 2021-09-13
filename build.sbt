@@ -2,12 +2,13 @@ name := "fuzzy"
 
 val apiVersion            = "0.3.0"
 val apiTestkitVersion     = "0.2.0"
+val patternRegexVersion   = "0.1.0"
 val cliVersion            = "0.3.0"
 val matcherTestkitVersion = "0.3.0"
 val matcherSimpleVersion  = "0.3.0"
 val matcherLoopVersion    = "0.2.0"
 
-// TODO upgrade to latest stable version of libraries: last updated in 2020, but newer vesion of cats-mtl probably bring in newer versions then stated below
+// last updated in 2020
 val catsCore      = "org.typelevel" %% "cats-core"      % "2.1.1"
 val catsEffect    = "org.typelevel" %% "cats-effect"    % "2.1.4"
 val declineEffect = "com.monovore"  %% "decline-effect" % "1.0.0"
@@ -16,8 +17,9 @@ val hedgehogSbt   = "qa.hedgehog"   %% "hedgehog-sbt"   % "4d4763691024de171c6e1
 
 def testDependencies(dependencyConfig: String) = List(hedgehogSbt).map(_ % dependencyConfig)
 
-val apiDeps            = List(fastparse)
+val apiDeps            = List()
 val apiTestkitDeps     = testDependencies("compile")
+val patternRegexDeps   = List(fastparse)
 val cliDeps            = List(catsCore, catsEffect, declineEffect)
 val matcherSimpleDeps  = List()
 val matcherTestkitDeps = testDependencies("compile")
@@ -26,7 +28,6 @@ lazy val api = (project in file("api"))
   .settings(
     name := "fuzzy-api",
     version := apiVersion,
-    testSettings(),
     libraryDependencies ++= apiDeps
   )
 
@@ -38,13 +39,14 @@ lazy val apiTestkit = (project in file("api-testkit"))
   )
   .dependsOn(api)
 
-lazy val apiTests = (project in file("api-tests"))
+lazy val patternRegex = (project in file("pattern-regex"))
   .settings(
-    name := "fuzzy-api-tests",
-    version := apiVersion,
-    testSettings()
+    name := "pattern-regex",
+    version := patternRegexVersion,
+    testSettings(),
+    libraryDependencies ++= patternRegexDeps
   )
-  .dependsOn(api % "test", apiTestkit % "test")
+  .dependsOn(api, apiTestkit % "test")
 
 lazy val matcherTestkit = (project in file("matcher-testkit"))
   .settings(
@@ -78,7 +80,7 @@ lazy val cli = (project in file("cli"))
     version := cliVersion,
     libraryDependencies ++= cliDeps
   )
-  .dependsOn(api, matcherLoop)
+  .dependsOn(api, patternRegex, matcherLoop)
 
 def testSettings() = Seq(
   resolvers += "bintray-scala-hedgehog" at "https://dl.bintray.com/hedgehogqa/scala-hedgehog",
