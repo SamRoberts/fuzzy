@@ -38,23 +38,46 @@ object RegexPattern {
     }
   }
 
-  def parser[_: P]: P[Pattern] = {
-    val illegalLits = ".*()\\"
+  def parser[_:P] = P(pattern ~ End)
 
-    def any: P[Pattern]     = P(".").map(text => Pattern.any)
+  def pattern[_:P]: P[Pattern] = elem.rep.map(Pattern.concat(_))
 
-    def lit: P[Pattern]     = P(CharPred(c => !illegalLits.contains(c)).!).map(text => Pattern.lit(text.head))
+  def elem[_:P]: P[Pattern] =
+    (P(single ~ "*".!.?)).map {
+      case (b, Some(_)) => Pattern.kleene(b);
+      case (b, None) => b
+    }
 
-    def esc: P[Pattern]     = P("\\" ~/ AnyChar.!).map(text => Pattern.lit(text.head))
+  def single[_:P]: P[Pattern] =
+    P(group | char)
 
-    def group: P[Pattern]   = P("(" ~/ pattern ~ ")").map(b => Pattern.group(b))
+  def group[_:P]: P[Pattern] =
+    P("(" ~/ pattern ~ ")").map(b => Pattern.group(b))
 
-    def single: P[Pattern]  = P(group | lit | esc | any)
+  def char[_:P]: P[Pattern] =
+    P(lit | esc | any)
 
-    def elem: P[Pattern]    = (P(single ~ "*".!.?)).map { case (b, Some(_)) => Pattern.kleene(b); case (b, None) => b }
+  def lit[_:P]: P[Pattern] =
+    P(CharPred(c => !illegalLits.contains(c)).!).map(text => Pattern.lit(text.head))
 
-    def pattern: P[Pattern] = elem.rep.map(Pattern.concat(_))
+  def esc[_:P]: P[Pattern] =
+    P(
+      "\\" ~/
+      CharPred(c => escapeMapping.isDefinedAt(c) || illegalLits.contains(c)).!
+    ).map { text =>
+      val c = text.head
+      Pattern.lit(if (escapeMapping.isDefinedAt(c)) escapeMapping(c) else c)
+    }
 
-    P(pattern ~ End)
+  def any[_:P]: P[Pattern] =
+    P(".").map(text => Pattern.any)
+
+  val illegalLits =
+    ".*()\\"
+
+  val escapeMapping: PartialFunction[Char, Char] = {
+    case 't' => '\t'
+    case 'n' => '\n'
+    case 'r' => '\r'
   }
 }
